@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clothing Store</title>
+  <meta name="description" content="Shop clothing for men, women and kids. Order on WhatsApp.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23c2562b%27/%3E%3Cpath d=%27M10 12h12l1 12H9z%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272%27/%3E%3Cpath d=%27M13 12a3 3 0 0 1 6 0%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272%27/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="announce" id="announce" hidden><div class="announce-track" id="announceTrack"></div></div>
+
+  <header class="header">
+    <div class="container header-row">
+      <a href="/" class="logo" id="logo">Store</a>
+      <label class="search" aria-label="Search products">
+        <span class="icon" data-icon="search"></span>
+        <input id="search" type="search" placeholder="Search kurta, jeans, abaya…">
+      </label>
+      <div class="header-social" id="headerSocial"></div>
+      <button class="cart-btn" id="cartBtn" aria-label="Open bag">
+        <span class="icon" data-icon="bag"></span>
+        <span class="cart-count" id="cartCount">0</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow" id="tagline"></p>
+          <h1 id="heroTitle"></h1>
+          <p class="hero-sub" id="heroSubtitle"></p>
+          <div class="hero-actions">
+            <a href="#shop" class="btn btn-dark">Shop now</a>
+            <a href="#shop" class="btn btn-ghost" data-jump="sale">View sale</a>
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="hero-card hero-card-a" id="heroCardA"></div>
+          <div class="hero-card hero-card-b" id="heroCardB"></div>
+          <div class="hero-stamp"><span>New<br>Season</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="shop" id="shop">
+      <div class="container">
+        <div class="shop-head">
+          <h2>Shop the collection</h2>
+          <select id="sort" aria-label="Sort products">
+            <option value="new">Newest</option>
+            <option value="low">Price: low to high</option>
+            <option value="high">Price: high to low</option>
+            <option value="sale">Biggest discount</option>
+          </select>
+        </div>
+        <div class="chips" id="chips" role="tablist"></div>
+        <div class="grid" id="grid"></div>
+        <p class="empty" id="empty" hidden>No products found.</p>
+      </div>
+    </section>
+
+    <section class="perks">
+      <div class="container perks-grid">
+        <div><strong>Cash on delivery</strong><span>Pay when you receive</span></div>
+        <div><strong>Easy exchange</strong><span>Size issue? We'll swap it</span></div>
+        <div><strong>Order on WhatsApp</strong><span>Quick replies, real people</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-grid">
+      <div>
+        <div class="logo logo-light" id="footerLogo"></div>
+        <p id="footerTagline"></p>
+      </div>
+      <div>
+        <h3>Follow &amp; contact us</h3>
+        <div class="footer-social" id="footerSocial"></div>
+      </div>
+    </div>
+    <div class="container footer-bottom">© <span id="year"></span> <span id="footerName"></span>. All rights reserved.</div>
+  </footer>
+
+  <a class="wa-float" id="waFloat" target="_blank" rel="noopener" hidden aria-label="Chat on WhatsApp"><span class="icon" data-icon="whatsapp"></span></a>
+
+  <!-- Product detail -->
+  <div class="overlay" id="productModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div class="modal-body" id="productBody"></div>
+    </div>
+  </div>
+
+  <!-- Cart drawer -->
+  <div class="overlay" id="cartDrawer" hidden>
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Your bag">
+      <div class="drawer-head">
+        <h2>Your bag</h2>
+        <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      </div>
+      <div class="drawer-items" id="cartItems"></div>
+      <div class="drawer-foot">
+        <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
+        <button class="btn btn-wa btn-block" id="checkoutBtn"><span class="icon" data-icon="whatsapp"></span> Order on WhatsApp</button>
+        <p class="note">Your order details will open in WhatsApp — just press send.</p>
+      </div>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/js/icons.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
