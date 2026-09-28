@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Store Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23c2562b%27/%3E%3Cpath d=%27M10 12h12l1 12H9z%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272%27/%3E%3Cpath d=%27M13 12a3 3 0 0 1 6 0%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272%27/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <!-- Login -->
+  <section class="login" id="loginView" hidden>
+    <form class="login-card" id="loginForm">
+      <h1>Dashboard</h1>
+      <p>Enter your admin password to manage the store.</p>
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" required>
+      <button class="btn btn-dark btn-block" type="submit">Log in</button>
+      <p class="error" id="loginError"></p>
+    </form>
+  </section>
+
+  <!-- Dashboard -->
+  <div class="app" id="appView" hidden>
+    <header class="topbar">
+      <div class="brand">Dashboard</div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="products">Products</button>
+        <button class="tab" data-tab="settings">Store &amp; Social</button>
+      </nav>
+      <div class="topbar-actions">
+        <a href="/" target="_blank" class="btn btn-ghost btn-sm">View store</a>
+        <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- Products -->
+      <section id="tab-products">
+        <div class="stats" id="stats"></div>
+        <div class="toolbar">
+          <input type="search" id="productSearch" placeholder="Search products…">
+          <select id="productFilter">
+            <option value="all">All products</option>
+            <option value="sale">On sale</option>
+            <option value="sold">Sold out</option>
+            <option value="available">Available</option>
+          </select>
+          <button class="btn btn-accent" id="addProductBtn">+ Add product</button>
+        </div>
+        <div class="product-list" id="productList"></div>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" hidden>
+        <form id="settingsForm" class="settings">
+          <div class="panel">
+            <h2>Store details</h2>
+            <label>Store name <input name="storeName" required maxlength="60"></label>
+            <label>Tagline <input name="tagline" maxlength="160"></label>
+            <div class="row">
+              <label>Currency <input name="currency" maxlength="8" placeholder="Rs."></label>
+            </div>
+            <label>Top announcement bar <small>Separate messages with •</small><input name="announcement" maxlength="200"></label>
+            <label>Home page heading <input name="heroTitle" maxlength="120"></label>
+            <label>Home page sub-heading <textarea name="heroSubtitle" rows="2" maxlength="300"></textarea></label>
+            <label>Categories <small>Comma separated, e.g. Men, Women, Kids</small><input name="categories"></label>
+          </div>
+
+          <div class="panel">
+            <h2>Social media &amp; contact</h2>
+            <p class="hint">Leave a field empty to hide it on the website.</p>
+            <label class="social-field"><span class="icon" data-icon="whatsapp"></span> WhatsApp number <small>With country code, e.g. 923001234567 — orders will come here</small><input name="whatsapp" inputmode="tel"></label>
+            <label class="social-field"><span class="icon" data-icon="instagram"></span> Instagram link <input name="instagram" type="url" placeholder="https://instagram.com/yourpage"></label>
+            <label class="social-field"><span class="icon" data-icon="facebook"></span> Facebook link <input name="facebook" type="url" placeholder="https://facebook.com/yourpage"></label>
+            <label class="social-field"><span class="icon" data-icon="tiktok"></span> TikTok link <input name="tiktok" type="url" placeholder="https://tiktok.com/@yourpage"></label>
+            <label class="social-field"><span class="icon" data-icon="youtube"></span> YouTube link <input name="youtube" type="url" placeholder="https://youtube.com/@yourchannel"></label>
+            <label class="social-field"><span class="icon" data-icon="email"></span> Email <input name="email" type="email" placeholder="you@example.com"></label>
+            <label class="social-field"><span class="icon" data-icon="phone"></span> Phone (for Call button) <input name="phone" inputmode="tel" placeholder="+923001234567"></label>
+          </div>
+
+          <div class="save-bar"><button class="btn btn-accent" type="submit">Save settings</button></div>
+        </form>
+
+        <form id="passwordForm" class="panel">
+          <h2>Change password</h2>
+          <label>Current password <input type="password" name="current" required autocomplete="current-password"></label>
+          <label>New password <input type="password" name="next" required minlength="6" autocomplete="new-password"></label>
+          <button class="btn btn-dark" type="submit">Update password</button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <!-- Product editor -->
+  <div class="overlay" id="editor" hidden>
+    <form class="editor" id="productForm">
+      <div class="editor-head">
+        <h2 id="editorTitle">Add product</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      </div>
+      <div class="editor-body">
+        <div class="field-block">
+          <div class="label">Pictures <small>First picture is the main one. Max 8MB each.</small></div>
+          <div class="images" id="imageList"></div>
+          <label class="upload">
+            <input type="file" id="imageInput" accept="image/*" multiple hidden>
+            <span>+ Upload pictures</span>
+          </label>
+        </div>
+        <label>Product name <input name="name" required maxlength="120"></label>
+        <label>Category <select name="category" id="categorySelect"></select></label>
+        <div class="row">
+          <label>Price <input name="price" type="number" min="0" step="1" required></label>
+          <label>Sale price <small>Optional</small><input name="salePrice" type="number" min="0" step="1"></label>
+        </div>
+        <label>Description <textarea name="description" rows="4" maxlength="3000"></textarea></label>
+        <label>Sizes <small>Comma separated, e.g. S, M, L, XL</small><input name="sizes"></label>
+        <label>Colours <small>Comma separated, e.g. Black, White</small><input name="colors"></label>
+        <div class="switches">
+          <label class="switch"><input type="checkbox" name="onSale"><span></span> On sale</label>
+          <label class="switch"><input type="checkbox" name="soldOut"><span></span> Sold out</label>
+          <label class="switch"><input type="checkbox" name="featured"><span></span> Trending</label>
+        </div>
+      </div>
+      <div class="editor-foot">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-accent" id="saveProductBtn">Save product</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/js/icons.js"></script>
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

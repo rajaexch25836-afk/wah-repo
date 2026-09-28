@@ -1,0 +1,30 @@
+{
+  "settings": {
+    "storeName": "WAH Clothing",
+    "tagline": "Everyday style, made to feel good",
+    "currency": "Rs.",
+    "announcement": "Free delivery on orders above Rs. 3000  •  Cash on delivery all over Pakistan  •  Easy exchange within 7 days",
+    "heroTitle": "Wear what you love.",
+    "heroSubtitle": "Fresh drops for men, women and kids — kurtas, shirts, jeans, abayas and more. Order in seconds on WhatsApp.",
+    "categories": ["Men", "Women", "Kids", "Unstitched", "Accessories"],
+    "social": {
+      "facebook": "https://facebook.com/",
+      "instagram": "https://instagram.com/",
+      "tiktok": "",
+      "youtube": "",
+      "whatsapp": "923001234567",
+      "phone": "+923001234567",
+      "email": "hello@example.com"
+    }
+  },
+  "products": [
+    { "id": "p1", "name": "Classic Cotton Kurta", "description": "Soft breathable cotton kurta with a relaxed fit. Perfect for daily wear and Friday prayers.", "category": "Men", "price": 3200, "salePrice": 2499, "onSale": true, "soldOut": false, "featured": true, "sizes": ["S", "M", "L", "XL"], "colors": ["White", "Sky Blue"], "images": [], "createdAt": "2026-09-01T00:00:00.000Z" },
+    { "id": "p2", "name": "Embroidered Lawn 3-Piece", "description": "Printed lawn shirt with embroidered neckline, dyed trouser and chiffon dupatta.", "category": "Women", "price": 5800, "salePrice": null, "onSale": false, "soldOut": false, "featured": true, "sizes": ["S", "M", "L"], "colors": ["Mint", "Peach"], "images": [], "createdAt": "2026-09-02T00:00:00.000Z" },
+    { "id": "p3", "name": "Slim Fit Denim Jeans", "description": "Stretch denim, mid rise, slim fit. Stays comfortable all day.", "category": "Men", "price": 3900, "salePrice": null, "onSale": false, "soldOut": true, "featured": false, "sizes": ["30", "32", "34", "36"], "colors": ["Dark Blue"], "images": [], "createdAt": "2026-09-03T00:00:00.000Z" },
+    { "id": "p4", "name": "Kids Graphic Tee", "description": "100% cotton tee with a fun print. Machine washable.", "category": "Kids", "price": 1200, "salePrice": 899, "onSale": true, "soldOut": false, "featured": false, "sizes": ["2-3Y", "4-5Y", "6-7Y"], "colors": ["Yellow", "Navy"], "images": [], "createdAt": "2026-09-04T00:00:00.000Z" },
+    { "id": "p5", "name": "Chiffon Abaya", "description": "Flowy nida abaya with chiffon sleeves and a matching scarf.", "category": "Women", "price": 6500, "salePrice": null, "onSale": false, "soldOut": false, "featured": true, "sizes": ["52", "54", "56"], "colors": ["Black"], "images": [], "createdAt": "2026-09-05T00:00:00.000Z" },
+    { "id": "p6", "name": "Unstitched Wash & Wear Suit", "description": "4 meter premium wash & wear fabric. Wrinkle resistant.", "category": "Unstitched", "price": 2800, "salePrice": 2300, "onSale": true, "soldOut": false, "featured": false, "sizes": [], "colors": ["Grey", "Brown", "Off White"], "images": [], "createdAt": "2026-09-06T00:00:00.000Z" },
+    { "id": "p7", "name": "Leather Belt", "description": "Genuine leather belt with a brushed metal buckle.", "category": "Accessories", "price": 1500, "salePrice": null, "onSale": false, "soldOut": false, "featured": false, "sizes": ["32", "34", "36", "38"], "colors": ["Brown", "Black"], "images": [], "createdAt": "2026-09-07T00:00:00.000Z" },
+    { "id": "p8", "name": "Oversized Hoodie", "description": "Heavy fleece hoodie with a dropped shoulder. Unisex.", "category": "Men", "price": 4200, "salePrice": null, "onSale": false, "soldOut": false, "featured": false, "sizes": ["M", "L", "XL"], "colors": ["Olive", "Charcoal"], "images": [], "createdAt": "2026-09-08T00:00:00.000Z" }
+  ]
+}
