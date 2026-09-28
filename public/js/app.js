@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], filter: 'all', query: '', sort: 'new', cart: [] };
+  const state = { settings: {}, products: [], payments: {}, accounts: {}, user: null, afterLogin: null, filter: 'all', query: '', sort: 'new', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -171,7 +171,9 @@
         ${p.soldOut ? '' : `<div><div class="opt-label">Quantity</div><div class="qty"><button data-qty="-1" aria-label="Less">−</button><span id="qtyVal">1</span><button data-qty="1" aria-label="More">+</button></div></div>`}
         <div class="detail-actions">
           <button class="btn btn-dark btn-block" id="addBtn" ${p.soldOut ? 'disabled' : ''}>${p.soldOut ? 'Sold out' : 'Add to bag'}</button>
-          ${state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="buyNowBtn"><span class="icon">${ICONS.whatsapp}</span> ${p.soldOut ? 'Ask when it’s back' : 'Buy now on WhatsApp'}</button>` : ''}
+          ${p.soldOut
+            ? state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="askBtn"><span class="icon">${ICONS.whatsapp}</span> Ask when it’s back</button>` : ''
+            : '<button class="btn btn-accent btn-block" id="buyNowBtn">Buy now</button>'}
         </div>
       </div>`;
 
@@ -198,10 +200,12 @@
         toast('Added to your bag');
       }
       if (e.target.closest('#buyNowBtn')) {
-        const lines = p.soldOut
-          ? `Hi! Is "${p.name}" coming back in stock?`
-          : `Hi! I want to order:\n\n• ${p.name}${pick.size ? ` | Size: ${pick.size}` : ''}${pick.color ? ` | Colour: ${pick.color}` : ''}\n  Qty: ${pick.qty} × ${money(finalPrice(p))}\n\nTotal: ${money(finalPrice(p) * pick.qty)}\n\nName:\nAddress:\nCity:`;
-        window.open(whatsappLink(lines), '_blank', 'noopener');
+        addToCart(p, pick);
+        closeOverlay($('productModal'));
+        openCart('details');
+      }
+      if (e.target.closest('#askBtn')) {
+        window.open(whatsappLink(`Hi! Is "${p.name}" coming back in stock?`), '_blank', 'noopener');
       }
     };
     openOverlay($('productModal'));
@@ -243,7 +247,8 @@
     const total = lines.reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
     $('cartCount').textContent = count;
     $('cartTotal').textContent = money(total);
-    $('checkoutBtn').disabled = !lines.length || !state.settings.social?.whatsapp;
+    $('checkoutBtn').disabled = !lines.length;
+    if (!lines.length && state.step === 'details') setStep('bag');
     $('cartItems').innerHTML = lines.length
       ? lines
           .map(
@@ -262,26 +267,412 @@
       : '<p class="empty">Your bag is empty.</p>';
   }
 
-  function checkout() {
-    const lines = cartLines();
-    if (!lines.length) return;
-    const total = lines.reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
-    const text = [
-      `Hi ${state.settings.storeName}! I want to place an order:`,
-      '',
-      ...lines.map(
-        (l, i) =>
-          `${i + 1}. ${l.product.name}${l.size ? ` | Size: ${l.size}` : ''}${l.color ? ` | Colour: ${l.color}` : ''}\n   Qty: ${l.qty} × ${money(finalPrice(l.product))}`
-      ),
-      '',
-      `Total: ${money(total)}`,
-      '',
-      'Name:',
-      'Address:',
-      'City:',
-    ].join('\n');
-    window.open(whatsappLink(text), '_blank', 'noopener');
+  // ---------- checkout ----------
+  const checkoutForm = $('checkoutForm');
+  const CUSTOMER_FIELDS = ['firstName', 'lastName', 'phone', 'email', 'address', 'city'];
+
+  function setStep(step) {
+    state.step = step;
+    const details = step === 'details';
+    $('drawerTitle').textContent = details ? 'Checkout' : 'Your bag';
+    $('cartItems').hidden = details;
+    checkoutForm.hidden = !details;
+    $('checkoutBtn').hidden = details;
+    $('placeOrderBtn').hidden = !details;
+    $('checkoutError').textContent = '';
+    if (details) {
+      checkoutForm.scrollTop = 0;
+      renderLoginHint();
+      $('manualAmount').textContent = money(cartTotal());
+    }
   }
+
+  const cartTotal = () => cartLines().reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
+
+  function renderLoginHint() {
+    const { requireLogin, allowRegistration } = state.accounts;
+    $('loginHint').innerHTML = state.user
+      ? ''
+      : requireLogin
+        ? `Please <button type="button" data-account="login">log in</button>${allowRegistration ? ' or <button type="button" data-account="register">create an account</button>' : ''} to place your order.`
+        : `Have an account? <button type="button" data-account="login">Log in</button>${allowRegistration ? ' — or <button type="button" data-account="register">register</button> to track your orders' : ''}.`;
+  }
+
+  // ---------- payment options ----------
+  const MANUAL_TYPE_LABELS = { bank: 'Bank transfer', easypaisa: 'Easypaisa', jazzcash: 'JazzCash', other: 'Other' };
+
+  function renderPayOptions() {
+    const p = state.payments;
+    const manualTypes = [...new Set((p.manualAccounts || []).map((a) => (a.type === 'bank' ? 'Bank' : MANUAL_TYPE_LABELS[a.type])))];
+    const options = [
+      p.cod && ['cod', 'Cash on delivery', 'Pay when you receive your order'],
+      p.manual && ['manual', `${manualTypes.join(' / ')} transfer`, 'Send the money yourself, then enter the transaction ID'],
+      p.easypaisa && ['easypaisa', 'Easypaisa (instant)', 'Pay from your Easypaisa account on the Easypaisa page'],
+      p.safepay && ['safepay', 'Pay online', 'Debit/credit card, bank account or wallet — secured by Safepay'],
+    ].filter(Boolean);
+    $('payOptions').innerHTML = options.length
+      ? options
+          .map(([value, title, help], i) => `<label class="pay-option"><input type="radio" name="paymentMethod" value="${value}"${i === 0 ? ' checked' : ''}><span><strong>${escapeHtml(title)}</strong><small>${help}</small></span></label>`)
+          .join('')
+      : '<p class="form-error">Ordering is paused right now. Please contact us.</p>';
+
+    $('manualAccounts').innerHTML = (p.manualAccounts || [])
+      .map((a, i) => {
+        const copyRow = (label, value) =>
+          value ? `<div class="acc-row">${label}: <code>${escapeHtml(value)}</code><button type="button" class="copy-btn" data-copy="${escapeHtml(value)}"><span class="icon">${ICONS.copy}</span>Copy</button></div>` : '';
+        return `
+        <label class="manual-account">
+          <input type="radio" name="manualAccount" value="${escapeHtml(a.id)}"${i === 0 ? ' checked' : ''}>
+          <span class="acc">
+            <span class="acc-type">${MANUAL_TYPE_LABELS[a.type] || ''}</span>
+            ${a.name ? `<strong>${escapeHtml(a.name)}</strong>` : ''}
+            <span>Account title: <strong>${escapeHtml(a.accountTitle)}</strong></span>
+            ${copyRow(a.type === 'bank' ? 'Account no.' : 'Number', a.accountNumber)}
+            ${copyRow('IBAN', a.iban)}
+            ${a.instructions ? `<span class="acc-note">${escapeHtml(a.instructions)}</span>` : ''}
+          </span>
+        </label>`;
+      })
+      .join('');
+    updatePayMethod();
+  }
+
+  function updatePayMethod() {
+    $('manualPay').hidden = checkoutForm.paymentMethod?.value !== 'manual';
+  }
+
+  function fillCheckoutFromUser() {
+    if (!state.user) return;
+    CUSTOMER_FIELDS.forEach((k) => state.user[k] && (checkoutForm[k].value = state.user[k]));
+  }
+
+  function openCart(step = 'bag') {
+    setStep(cartLines().length ? step : 'bag');
+    openOverlay($('cartDrawer'));
+    if (state.step === 'details') setTimeout(() => checkoutForm.firstName.focus(), 50);
+  }
+
+  function prefillCustomer() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('customer') || '{}');
+      CUSTOMER_FIELDS.forEach((k) => saved[k] && (checkoutForm[k].value = saved[k]));
+    } catch {}
+  }
+
+  function validateCheckout() {
+    const f = checkoutForm;
+    const checks = [
+      [f.firstName, f.firstName.value.trim(), 'Please enter your first name'],
+      [f.lastName, f.lastName.value.trim(), 'Please enter your last name'],
+      [f.phone, /^\+?[\d\s-]{10,20}$/.test(f.phone.value.trim()) && f.phone.value.replace(/\D/g, '').length >= 10, 'Please enter a valid contact number'],
+      [f.email, !f.email.value.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.value.trim()), 'Please enter a valid email or leave it empty'],
+      [f.address, f.address.value.trim().length >= 10, 'Please enter your full address (house, street, area)'],
+      [f.city, f.city.value.trim(), 'Please enter your city'],
+    ];
+    if (f.paymentMethod?.value === 'manual') {
+      checks.push([f.reference, f.reference.value.trim().length >= 4, 'Please enter the transaction ID (TID) of your payment']);
+    }
+    checks.forEach(([el]) => el.classList.remove('invalid'));
+    const failed = checks.find(([, ok]) => !ok);
+    if (!failed) return true;
+    failed[0].classList.add('invalid');
+    failed[0].focus();
+    $('checkoutError').textContent = failed[2];
+    return false;
+  }
+
+  async function placeOrder(e) {
+    e.preventDefault();
+    if (state.accounts.requireLogin && !state.user) {
+      openAccount('login', 'checkout');
+      return;
+    }
+    const f = checkoutForm;
+    if (!f.paymentMethod) return;
+    if (!validateCheckout()) return;
+    const customer = Object.fromEntries([...CUSTOMER_FIELDS, 'notes'].map((k) => [k, f[k].value.trim()]));
+    const paymentMethod = f.paymentMethod.value;
+    const manual = paymentMethod === 'manual' ? { accountId: f.manualAccount.value, reference: f.reference.value.trim() } : undefined;
+    try {
+      localStorage.setItem('customer', JSON.stringify(Object.fromEntries(CUSTOMER_FIELDS.map((k) => [k, customer[k]]))));
+    } catch {}
+
+    const btn = $('placeOrderBtn');
+    btn.disabled = true;
+    btn.textContent = ['cod', 'manual'].includes(paymentMethod) ? 'Placing order…' : 'Taking you to payment…';
+    $('checkoutError').textContent = '';
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer,
+          paymentMethod,
+          manual,
+          items: cartLines().map((l) => ({ id: l.id, size: l.size, color: l.color, qty: l.qty })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not place your order. Please try again.');
+      if (data.redirect) {
+        // The bag is cleared only after the payment is confirmed
+        window.location.href = data.redirect;
+        return;
+      }
+      const receipt = manual && f.receipt.files[0];
+      if (receipt) {
+        const body = new FormData();
+        body.append('receipt', receipt);
+        const up = await fetch(`/api/orders/${data.order.id}/receipt?t=${data.accessToken}`, { method: 'POST', body }).catch(() => null);
+        if (up?.ok) data.order.manualPayment.hasReceipt = true;
+        else toast('Order placed, but the screenshot did not upload. Please send it on WhatsApp.');
+      }
+      state.cart = [];
+      saveCart();
+      ['notes', 'reference', 'receipt'].forEach((k) => (f[k].value = ''));
+      closeOverlay($('cartDrawer'));
+      showOrder(data.order);
+    } catch (err) {
+      $('checkoutError').textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Place order';
+    }
+  }
+
+  function paymentText(order) {
+    const paid = order.paymentStatus === 'paid';
+    if (order.paymentMethod === 'cod') return paid ? 'Paid (cash on delivery)' : 'Cash on delivery';
+    if (order.paymentMethod === 'manual') {
+      const label = order.manualPayment?.typeLabel || 'Transfer';
+      return paid ? `Paid (${label})` : order.paymentStatus === 'failed' ? `${label} — not received` : `${label} — being checked`;
+    }
+    return paid ? `Paid (${order.paymentMethod === 'easypaisa' ? 'Easypaisa' : 'online'})` : 'Payment not completed';
+  }
+
+  function showOrder(order, paymentFailed = false) {
+    const paid = order.paymentStatus === 'paid';
+    const failed = paymentFailed || (!['cod', 'manual'].includes(order.paymentMethod) && !paid);
+    const payText = paymentText(order);
+    const waText = `Hi ${state.settings.storeName}! I just placed order #${order.number} (${money(order.total)}).`;
+    $('orderBody').innerHTML = `
+      <div class="check${failed ? ' warn' : ''}">${failed ? '!' : '✓'}</div>
+      <h2 id="orderTitle">${failed ? 'Payment not completed' : `Thank you, ${escapeHtml(order.firstName)}!`}</h2>
+      <p>${failed
+        ? `We could not confirm the payment for order #${order.number}. If money was deducted, please contact us with your order number.`
+        : order.paymentMethod === 'manual' && !paid
+          ? `Your order <strong>#${order.number}</strong> has been placed. We will check your payment (TID ${escapeHtml(order.manualPayment?.reference || '')}) and confirm your order.`
+          : `Your order <strong>#${order.number}</strong> has been placed. We will call you to confirm it.`}</p>
+      <div class="order-summary">
+        ${order.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${i.size ? ` (${escapeHtml(i.size)})` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+        <div class="sum-total"><span>Total</span><span>${money(order.total)}</span></div>
+        <div><span>Payment</span><span>${payText}</span></div>
+      </div>
+      ${state.settings.social?.whatsapp ? `<a class="btn btn-wa btn-block" href="${escapeHtml(whatsappLink(waText))}" target="_blank" rel="noopener"><span class="icon">${ICONS.whatsapp}</span> Message us on WhatsApp</a>` : ''}
+      <button class="btn btn-dark btn-block" data-close>Continue shopping</button>`;
+    openOverlay($('orderModal'));
+  }
+
+  // Handles the return from Safepay/Easypaisa (/?order=…&t=…) and cancelled payments (/?payment=cancelled)
+  async function handleReturn() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('order') && !params.has('payment')) return;
+    history.replaceState(null, '', location.pathname);
+    if (params.get('payment') === 'cancelled') {
+      toast('Payment cancelled — your bag is still here');
+      openCart('details');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(params.get('order'))}?t=${encodeURIComponent(params.get('t') || '')}`);
+      if (!res.ok) return;
+      const order = await res.json();
+      if (order.paymentStatus === 'paid') {
+        state.cart = [];
+        saveCart();
+      }
+      showOrder(order, params.get('payment') === 'failed');
+    } catch {}
+  }
+
+  // ---------- customer account ----------
+  const ORDER_STATUS_LABELS = { new: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+
+  async function jsonFetch(url, body, method = 'POST') {
+    const res = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
+    return data;
+  }
+
+  function updateAccountUI() {
+    $('accountName').textContent = state.user ? state.user.firstName : 'Log in';
+    renderLoginHint();
+  }
+
+  const field = (label, name, attrs = '', value = '') =>
+    `<label>${label} <input name="${name}" value="${escapeHtml(value)}" ${attrs}></label>`;
+
+  // view: 'login' | 'register' | 'profile'. then: 'checkout' to go back to checkout after logging in.
+  async function openAccount(view = state.user ? 'profile' : 'login', then = null) {
+    if (then) state.afterLogin = then;
+    if (view === 'register' && !state.accounts.allowRegistration) view = 'login';
+    const body = $('accountBody');
+    let orders = [];
+    if (view === 'profile' && state.user) {
+      // Always show fresh details (an order may have saved the address; the admin may have edited them)
+      try {
+        ({ user: state.user, orders } = await jsonFetch('/api/account', null, 'GET'));
+      } catch {
+        state.user = null; // logged out or blocked
+        view = 'login';
+      }
+      updateAccountUI();
+    }
+    if (view === 'profile' && state.user) {
+      const u = state.user;
+      body.innerHTML = `
+        <h2>Hi, ${escapeHtml(u.firstName)}</h2>
+        <p>${escapeHtml(u.email)} · ${escapeHtml(u.phone)}</p>
+        <h3>My orders</h3>
+        <div class="my-orders">${renderMyOrders(orders)}</div>
+        <h3>My details</h3>
+        <form class="form-stack" data-form="profile" novalidate>
+          <div class="field-row">${field('First name', 'firstName', 'maxlength="50" autocomplete="given-name"', u.firstName)}${field('Last name', 'lastName', 'maxlength="50" autocomplete="family-name"', u.lastName)}</div>
+          ${field('Email', 'email', 'type="email" maxlength="120" autocomplete="email"', u.email)}
+          ${field('Mobile number', 'phone', 'type="tel" maxlength="20" autocomplete="tel"', u.phone)}
+          <label>Address <textarea name="address" rows="2" maxlength="300" autocomplete="street-address">${escapeHtml(u.address || '')}</textarea></label>
+          ${field('City', 'city', 'maxlength="60" autocomplete="address-level2"', u.city)}
+          <p class="form-error" data-error></p>
+          <button class="btn btn-dark btn-block" type="submit">Save details</button>
+        </form>
+        <h3>Change password</h3>
+        <form class="form-stack" data-form="password" novalidate>
+          ${field('Current password', 'current', 'type="password" autocomplete="current-password"')}
+          ${field('New password', 'next', 'type="password" minlength="6" autocomplete="new-password"')}
+          <p class="form-error" data-error></p>
+          <button class="btn btn-ghost btn-block" type="submit">Update password</button>
+        </form>
+        <button class="link-btn" data-logout>Log out</button>`;
+      openOverlay($('accountModal'));
+      return;
+    }
+    const tabs = state.accounts.allowRegistration
+      ? `<div class="acc-tabs"><button type="button" class="${view === 'login' ? 'active' : ''}" data-account="login">Log in</button><button type="button" class="${view === 'register' ? 'active' : ''}" data-account="register">Create account</button></div>`
+      : '';
+    body.innerHTML =
+      view === 'register'
+        ? `<h2>Create account</h2>${tabs}
+        <form class="form-stack" data-form="register" novalidate>
+          <div class="field-row">${field('First name', 'firstName', 'maxlength="50" autocomplete="given-name"')}${field('Last name', 'lastName', 'maxlength="50" autocomplete="family-name"')}</div>
+          ${field('Email', 'email', 'type="email" maxlength="120" autocomplete="email"')}
+          ${field('Mobile number', 'phone', 'type="tel" maxlength="20" autocomplete="tel" placeholder="03001234567"')}
+          ${field('Password <small>(at least 6 characters)</small>', 'password', 'type="password" minlength="6" autocomplete="new-password"')}
+          <p class="form-error" data-error></p>
+          <button class="btn btn-accent btn-block" type="submit">Create account</button>
+        </form>`
+        : `<h2>Welcome back</h2>${tabs}
+        <form class="form-stack" data-form="login" novalidate>
+          ${field('Email or mobile number', 'login', 'autocomplete="username"')}
+          ${field('Password', 'password', 'type="password" autocomplete="current-password"')}
+          <p class="form-error" data-error></p>
+          <button class="btn btn-dark btn-block" type="submit">Log in</button>
+        </form>`;
+    openOverlay($('accountModal'));
+    setTimeout(() => body.querySelector('input')?.focus(), 50);
+  }
+
+  function renderMyOrders(orders) {
+    return orders.length
+      ? orders
+          .map(
+            (o) => `
+          <div class="my-order">
+            <div class="top"><span>#${o.number}</span><span>${money(o.total)}</span></div>
+            <div class="meta">${new Date(o.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${o.items.reduce((n, i) => n + i.qty, 0)} item(s)</div>
+            <div><span class="status-pill">${ORDER_STATUS_LABELS[o.status] || o.status}</span> <span class="meta">${paymentText(o)}</span></div>
+          </div>`
+          )
+          .join('')
+      : '<p class="acc-note">No orders yet.</p>';
+  }
+
+  function afterLogin(user) {
+    state.user = user;
+    updateAccountUI();
+    fillCheckoutFromUser();
+    if (state.afterLogin === 'checkout') {
+      state.afterLogin = null;
+      closeOverlay($('accountModal'));
+      openCart('details');
+    } else {
+      openAccount('profile');
+    }
+  }
+
+  $('accountBtn').addEventListener('click', () => {
+    state.afterLogin = null;
+    openAccount();
+  });
+
+  // "Log in" / "register" links anywhere on the page (checkout hint, modal tabs)
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('[data-account]');
+    if (!link) return;
+    const fromCheckout = Boolean(link.closest('#checkoutForm'));
+    if (fromCheckout) closeOverlay($('cartDrawer'));
+    openAccount(link.dataset.account, fromCheckout ? 'checkout' : null);
+  });
+
+  $('accountBody').addEventListener('click', async (e) => {
+    if (!e.target.closest('[data-logout]')) return;
+    await fetch('/api/account/logout', { method: 'POST' }).catch(() => {});
+    state.user = null;
+    updateAccountUI();
+    closeOverlay($('accountModal'));
+    toast('You are logged out');
+  });
+
+  $('accountBody').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form));
+    const errorEl = form.querySelector('[data-error]');
+    const btn = form.querySelector('[type=submit]');
+    errorEl.textContent = '';
+    btn.disabled = true;
+    try {
+      switch (form.dataset.form) {
+        case 'login':
+          afterLogin(await jsonFetch('/api/account/login', data));
+          toast('Welcome back!');
+          break;
+        case 'register':
+          afterLogin(await jsonFetch('/api/account/register', data));
+          toast('Your account is ready');
+          break;
+        case 'profile':
+          state.user = await jsonFetch('/api/account', data, 'PUT');
+          updateAccountUI();
+          fillCheckoutFromUser();
+          toast('Details saved');
+          break;
+        case 'password':
+          await jsonFetch('/api/account/password', data);
+          form.reset();
+          toast('Password updated');
+          break;
+      }
+    } catch (err) {
+      errorEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ---------- overlays ----------
   function openOverlay(el) {
@@ -327,7 +718,7 @@
     const card = e.target.closest('.card');
     if (card) openProduct(card.dataset.id);
   });
-  $('cartBtn').addEventListener('click', () => openOverlay($('cartDrawer')));
+  $('cartBtn').addEventListener('click', () => openCart());
   $('cartItems').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-remove]');
     if (!btn) return;
@@ -335,7 +726,28 @@
     state.cart = state.cart.filter((l) => !(l.id === line.id && l.size === line.size && l.color === line.color));
     saveCart();
   });
-  $('checkoutBtn').addEventListener('click', checkout);
+  $('checkoutBtn').addEventListener('click', () => {
+    setStep('details');
+    checkoutForm.firstName.focus();
+  });
+  $('backToBag').addEventListener('click', () => setStep('bag'));
+  checkoutForm.addEventListener('submit', placeOrder);
+  checkoutForm.addEventListener('change', (e) => e.target.name === 'paymentMethod' && updatePayMethod());
+  checkoutForm.addEventListener('click', async (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (!copy) return;
+    e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(copy.dataset.copy);
+      toast('Copied');
+    } catch {
+      toast(copy.dataset.copy);
+    }
+  });
+  checkoutForm.addEventListener('input', (e) => {
+    e.target.classList.remove('invalid');
+    $('checkoutError').textContent = '';
+  });
 
   // ---------- boot ----------
   fetch('/api/store')
@@ -343,11 +755,24 @@
     .then((data) => {
       state.settings = data.settings;
       state.products = data.products;
+      state.payments = data.payments || {};
+      state.accounts = data.accounts || {};
       loadCart();
+      prefillCustomer();
+      renderPayOptions();
       renderSettings();
       renderChips();
       renderGrid();
       renderCart();
+      return fetch('/api/account')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)
+        .then((account) => {
+          state.user = account?.user || null;
+          updateAccountUI();
+          fillCheckoutFromUser();
+          handleReturn();
+        });
     })
     .catch(() => {
       $('grid').innerHTML = '<p class="empty">Could not load products. Please refresh.</p>';

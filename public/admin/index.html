@@ -28,7 +28,10 @@
     <header class="topbar">
       <div class="brand">Dashboard</div>
       <nav class="tabs">
-        <button class="tab active" data-tab="products">Products</button>
+        <button class="tab active" data-tab="orders">Orders <span class="tab-badge" id="newOrdersBadge" hidden></span></button>
+        <button class="tab" data-tab="products">Products</button>
+        <button class="tab" data-tab="customers">Customers</button>
+        <button class="tab" data-tab="payments">Payments</button>
         <button class="tab" data-tab="settings">Store &amp; Social</button>
       </nav>
       <div class="topbar-actions">
@@ -38,8 +41,26 @@
     </header>
 
     <main class="main">
+      <!-- Orders -->
+      <section id="tab-orders">
+        <div class="stats" id="orderStats"></div>
+        <div class="toolbar">
+          <input type="search" id="orderSearch" placeholder="Search by name, phone, city or order #…">
+          <select id="orderFilter">
+            <option value="all">All orders</option>
+            <option value="new">New</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="shipped">Shipped</option>
+            <option value="delivered">Delivered</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshOrdersBtn">Refresh</button>
+        </div>
+        <div class="order-list" id="orderList"></div>
+      </section>
+
       <!-- Products -->
-      <section id="tab-products">
+      <section id="tab-products" hidden>
         <div class="stats" id="stats"></div>
         <div class="toolbar">
           <input type="search" id="productSearch" placeholder="Search products…">
@@ -52,6 +73,46 @@
           <button class="btn btn-accent" id="addProductBtn">+ Add product</button>
         </div>
         <div class="product-list" id="productList"></div>
+      </section>
+
+      <!-- Customers -->
+      <section id="tab-customers" hidden>
+        <div class="panel">
+          <h2>Customer accounts</h2>
+          <div class="switches switches-col" id="accountSettings">
+            <label class="switch"><input type="checkbox" name="allowRegistration"><span></span> Allow new customers to register</label>
+            <label class="switch"><input type="checkbox" name="requireLogin"><span></span> Customers must log in to place an order</label>
+          </div>
+        </div>
+        <div class="stats" id="userStats"></div>
+        <div class="toolbar">
+          <input type="search" id="userSearch" placeholder="Search by name, email, mobile or city…">
+          <select id="userFilter">
+            <option value="all">All customers</option>
+            <option value="active">Active</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshUsersBtn">Refresh</button>
+        </div>
+        <div class="product-list" id="userList"></div>
+      </section>
+
+      <!-- Payments -->
+      <section id="tab-payments" hidden>
+        <form id="paymentForm">
+          <div class="panel">
+            <h2>Payment methods</h2>
+            <label class="switch"><input type="checkbox" name="cod"><span></span> Cash on delivery</label>
+            <p class="hint" id="gatewayStatus"></p>
+          </div>
+          <div class="panel">
+            <h2>Bank / Easypaisa / JazzCash accounts</h2>
+            <p class="hint">Customers see these accounts at checkout, send the money, and enter the transaction ID (TID). Check the payment and use “Mark as paid” on the order.</p>
+            <div class="manual-list" id="manualList"></div>
+            <button type="button" class="btn btn-ghost" id="addManualBtn">+ Add account</button>
+          </div>
+          <div class="save-bar"><button class="btn btn-accent" type="submit">Save payment settings</button></div>
+        </form>
       </section>
 
       <!-- Settings -->
@@ -93,6 +154,33 @@
         </form>
       </section>
     </main>
+  </div>
+
+  <!-- Customer editor -->
+  <div class="overlay" id="userEditor" hidden>
+    <form class="editor" id="userForm" novalidate>
+      <div class="editor-head">
+        <h2>Edit customer</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      </div>
+      <div class="editor-body">
+        <div class="row">
+          <label>First name <input name="firstName" maxlength="50" required></label>
+          <label>Last name <input name="lastName" maxlength="50" required></label>
+        </div>
+        <label>Email <input name="email" type="email" maxlength="120" required></label>
+        <label>Mobile number <input name="phone" type="tel" maxlength="20" required></label>
+        <label>Address <textarea name="address" rows="2" maxlength="300"></textarea></label>
+        <label>City <input name="city" maxlength="60"></label>
+        <label>New password <small>Leave empty to keep the current password. Setting one logs the customer out.</small><input name="newPassword" type="password" minlength="6" autocomplete="new-password"></label>
+        <label class="switch"><input type="checkbox" name="blocked"><span></span> Blocked (cannot log in)</label>
+        <p class="pmeta" id="userMeta"></p>
+      </div>
+      <div class="editor-foot">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-accent" id="saveUserBtn">Save customer</button>
+      </div>
+    </form>
   </div>
 
   <!-- Product editor -->

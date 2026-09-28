@@ -22,6 +22,7 @@
         <input id="search" type="search" placeholder="Search kurta, jeans, abaya…">
       </label>
       <div class="header-social" id="headerSocial"></div>
+      <button class="account-btn" id="accountBtn" aria-label="My account"><span class="icon" data-icon="user"></span><span class="account-name" id="accountName">Log in</span></button>
       <button class="cart-btn" id="cartBtn" aria-label="Open bag">
         <span class="icon" data-icon="bag"></span>
         <span class="cart-count" id="cartCount">0</span>
@@ -101,18 +102,60 @@
 
   <!-- Cart drawer -->
   <div class="overlay" id="cartDrawer" hidden>
-    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Your bag">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
       <div class="drawer-head">
-        <h2>Your bag</h2>
+        <h2 id="drawerTitle">Your bag</h2>
         <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
       </div>
       <div class="drawer-items" id="cartItems"></div>
+
+      <form class="drawer-items checkout-form" id="checkoutForm" hidden novalidate>
+        <button type="button" class="back-link" id="backToBag">← Back to bag</button>
+        <div class="login-hint" id="loginHint"></div>
+        <h3>Delivery details</h3>
+        <div class="field-row">
+          <label>First name <input name="firstName" autocomplete="given-name" maxlength="50" required></label>
+          <label>Last name <input name="lastName" autocomplete="family-name" maxlength="50" required></label>
+        </div>
+        <label>Contact number <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="03001234567" maxlength="20" required></label>
+        <label>Email <small>(optional)</small> <input name="email" type="email" autocomplete="email" maxlength="120"></label>
+        <label>Full address <textarea name="address" rows="3" autocomplete="street-address" placeholder="House #, street, area / sector" maxlength="300" required></textarea></label>
+        <label>City <input name="city" autocomplete="address-level2" maxlength="60" required></label>
+        <label>Order notes <small>(optional)</small> <textarea name="notes" rows="2" placeholder="Landmark, delivery time, etc." maxlength="300"></textarea></label>
+
+        <h3>Payment</h3>
+        <div class="pay-options" id="payOptions"></div>
+        <div class="manual-pay" id="manualPay" hidden>
+          <p class="manual-help">Send <strong id="manualAmount"></strong> to one of these accounts, then enter the transaction ID below.</p>
+          <div class="manual-accounts" id="manualAccounts"></div>
+          <label>Transaction ID (TID) <input name="reference" maxlength="60" placeholder="e.g. 0123456789" autocomplete="off"></label>
+          <label>Payment screenshot <small>(optional)</small> <input name="receipt" type="file" accept="image/*"></label>
+        </div>
+        <p class="form-error" id="checkoutError" role="alert"></p>
+      </form>
+
       <div class="drawer-foot">
         <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
-        <button class="btn btn-wa btn-block" id="checkoutBtn"><span class="icon" data-icon="whatsapp"></span> Order on WhatsApp</button>
-        <p class="note">Your order details will open in WhatsApp — just press send.</p>
+        <button class="btn btn-dark btn-block" id="checkoutBtn">Checkout</button>
+        <button class="btn btn-accent btn-block" id="placeOrderBtn" type="submit" form="checkoutForm" hidden>Place order</button>
       </div>
     </aside>
+  </div>
+
+  <!-- Account -->
+  <div class="overlay" id="accountModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-label="Account">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div class="account-body" id="accountBody"></div>
+    </div>
+  </div>
+
+  <!-- Order confirmation -->
+  <div class="overlay" id="orderModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="orderTitle">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div class="order-done" id="orderBody"></div>
+    </div>
   </div>
 
   <div class="toast" id="toast" hidden></div>
