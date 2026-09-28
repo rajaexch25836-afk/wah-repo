@@ -22,6 +22,7 @@
         <input id="search" type="search" placeholder="Search kurta, jeans, abaya…">
       </label>
       <div class="header-social" id="headerSocial"></div>
+      <button class="account-btn" id="accountBtn" aria-label="My account"><span class="icon" data-icon="user"></span><span class="account-name" id="accountName">Log in</span></button>
       <button class="cart-btn" id="cartBtn" aria-label="Open bag">
         <span class="icon" data-icon="bag"></span>
         <span class="cart-count" id="cartCount">0</span>
@@ -110,6 +111,7 @@
 
       <form class="drawer-items checkout-form" id="checkoutForm" hidden novalidate>
         <button type="button" class="back-link" id="backToBag">← Back to bag</button>
+        <div class="login-hint" id="loginHint"></div>
         <h3>Delivery details</h3>
         <div class="field-row">
           <label>First name <input name="firstName" autocomplete="given-name" maxlength="50" required></label>
@@ -122,10 +124,12 @@
         <label>Order notes <small>(optional)</small> <textarea name="notes" rows="2" placeholder="Landmark, delivery time, etc." maxlength="300"></textarea></label>
 
         <h3>Payment</h3>
-        <div class="pay-options">
-          <label class="pay-option"><input type="radio" name="paymentMethod" value="cod" checked><span><strong>Cash on delivery</strong><small>Pay when you receive your order</small></span></label>
-          <label class="pay-option" id="payEasypaisa" hidden><input type="radio" name="paymentMethod" value="easypaisa"><span><strong>Easypaisa</strong><small>Pay from your Easypaisa account</small></span></label>
-          <label class="pay-option" id="payOnline" hidden><input type="radio" name="paymentMethod" value="safepay"><span><strong>Pay online</strong><small>Debit/credit card, bank account or wallet — secured by Safepay</small></span></label>
+        <div class="pay-options" id="payOptions"></div>
+        <div class="manual-pay" id="manualPay" hidden>
+          <p class="manual-help">Send <strong id="manualAmount"></strong> to one of these accounts, then enter the transaction ID below.</p>
+          <div class="manual-accounts" id="manualAccounts"></div>
+          <label>Transaction ID (TID) <input name="reference" maxlength="60" placeholder="e.g. 0123456789" autocomplete="off"></label>
+          <label>Payment screenshot <small>(optional)</small> <input name="receipt" type="file" accept="image/*"></label>
         </div>
         <p class="form-error" id="checkoutError" role="alert"></p>
       </form>
@@ -136,6 +140,14 @@
         <button class="btn btn-accent btn-block" id="placeOrderBtn" type="submit" form="checkoutForm" hidden>Place order</button>
       </div>
     </aside>
+  </div>
+
+  <!-- Account -->
+  <div class="overlay" id="accountModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-label="Account">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div class="account-body" id="accountBody"></div>
+    </div>
   </div>
 
   <!-- Order confirmation -->

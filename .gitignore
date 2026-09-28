@@ -3,3 +3,4 @@ public/uploads/*
 !public/uploads/.gitkeep
 data/store.json
 .env
+data/receipts/

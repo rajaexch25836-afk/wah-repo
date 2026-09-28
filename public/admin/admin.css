@@ -43,8 +43,8 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
 /* Layout */
 .topbar { position: sticky; top: 0; z-index: 10; background: var(--surface); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 16px; padding: 10px 20px; flex-wrap: wrap; }
 .brand { font-family: 'DM Serif Display', serif; font-size: 22px; }
-.tabs { display: flex; gap: 4px; background: var(--bg); padding: 4px; border-radius: 12px; }
-.tab { border: 0; background: none; padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.tabs { display: flex; gap: 4px; background: var(--bg); padding: 4px; border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
+.tab { border: 0; background: none; padding: 8px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; color: var(--muted); white-space: nowrap; }
 .tab.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
 .main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
@@ -102,6 +102,25 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
 .order-total { border-top: 1px solid var(--line); padding-top: 6px; font-weight: 700; }
 .order-items > .order-actions { justify-content: flex-start; gap: 6px; flex-wrap: wrap; }
 
+/* Customers */
+.switches-col { flex-direction: column; gap: 12px; }
+.urow { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 14px; align-items: center; background: var(--surface); padding: 12px; border-radius: var(--radius); }
+.urow.is-blocked { opacity: .7; }
+.avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--bg); display: grid; place-items: center; font-weight: 700; }
+.ustats { text-align: right; font-size: 13px; color: var(--muted); }
+.ustats b { display: block; color: var(--ink); font-size: 15px; }
+.badge-blocked { font-size: 11px; font-weight: 700; background: #f9e0dc; color: var(--red); padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+.badge-user { font-size: 11px; font-weight: 700; background: var(--bg); padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+
+/* Payments */
+#paymentForm .panel { margin-bottom: 16px; }
+.manual-list { display: grid; gap: 12px; }
+.manual-card { border: 1.5px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; }
+.manual-card.off { opacity: .6; }
+.manual-card-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+.manual-card-head select { width: auto; }
+.receipt-link { font-size: 13px; font-weight: 700; color: var(--accent-dark); }
+
 /* Settings */
 .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 .panel { background: var(--surface); border-radius: var(--radius); padding: 20px; display: grid; gap: 14px; margin-bottom: 16px; }
@@ -144,7 +163,10 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
 @media (max-width: 760px) {
   .topbar { padding: 10px 12px; gap: 10px; }
   .tabs { order: 3; width: 100%; }
-  .tab { flex: 1; }
+  .tab { flex: 1 0 auto; }
+  .urow { grid-template-columns: 44px 1fr; }
+  .urow .ustats { text-align: left; }
+  .urow .ustats, .urow .pactions { grid-column: 1 / -1; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .toolbar { flex-wrap: wrap; }
   .toolbar input { flex-basis: 100%; }

@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], orders: [], editing: null, images: [], search: '', filter: 'all', orderSearch: '', orderFilter: 'all' };
+  const state = { settings: {}, products: [], orders: [], users: [], payment: null, userSearch: '', userFilter: 'all', editing: null, images: [], search: '', filter: 'all', orderSearch: '', orderFilter: 'all' };
 
   document.querySelectorAll('[data-icon]').forEach((el) => (el.innerHTML = ICONS[el.dataset.icon] || ''));
 
@@ -41,9 +41,12 @@
     state.products = data.products;
     $('loginView').hidden = true;
     $('appView').hidden = false;
+    state.accountSettings = data.accounts || {};
     renderProducts();
     fillSettings();
     loadOrders();
+    loadUsers();
+    loadPaymentSettings();
   }
 
   $('loginForm').addEventListener('submit', async (e) => {
@@ -67,16 +70,16 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      $('tab-orders').hidden = tab.dataset.tab !== 'orders';
-      $('tab-products').hidden = tab.dataset.tab !== 'products';
-      $('tab-settings').hidden = tab.dataset.tab !== 'settings';
+      ['orders', 'products', 'customers', 'payments', 'settings'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
     })
   );
 
   // ---------- orders ----------
   const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
   const PAYMENT_LABELS = { unpaid: 'Unpaid', pending: 'Awaiting payment', paid: 'Paid', failed: 'Payment failed' };
-  const METHOD_LABELS = { cod: 'COD', safepay: 'Safepay', easypaisa: 'Easypaisa' };
+  const METHOD_LABELS = { cod: 'COD', safepay: 'Safepay', easypaisa: 'Easypaisa', manual: 'Transfer' };
+  const MANUAL_TYPES = { bank: 'Bank transfer', easypaisa: 'Easypaisa', jazzcash: 'JazzCash', other: 'Other' };
+  const methodLabel = (o) => (o.paymentMethod === 'manual' ? MANUAL_TYPES[o.manualPayment?.type] || 'Transfer' : METHOD_LABELS[o.paymentMethod] || o.paymentMethod);
 
   async function loadOrders() {
     try {
@@ -104,7 +107,7 @@
     const list = all.filter((o) => {
       if (state.orderFilter !== 'all' && o.status !== state.orderFilter) return false;
       const c = o.customer;
-      return !q || `#${o.number} ${o.number} ${c.firstName} ${c.lastName} ${c.phone} ${c.city} ${c.email}`.toLowerCase().includes(q);
+      return !q || `#${o.number} ${o.number} ${c.firstName} ${c.lastName} ${c.phone} ${c.city} ${c.email} ${o.manualPayment?.reference || ''}`.toLowerCase().includes(q);
     });
 
     $('orderList').innerHTML = list.length
@@ -119,14 +122,14 @@
                 <div class="order-no">#${o.number}</div>
                 <div class="pmeta">${new Date(o.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
               </div>
-              <span class="pay-badge pay-${o.paymentStatus}">${METHOD_LABELS[o.paymentMethod] || o.paymentMethod} · ${PAYMENT_LABELS[o.paymentStatus] || o.paymentStatus}</span>
+              <span class="pay-badge pay-${o.paymentStatus}">${escapeHtml(methodLabel(o))} · ${PAYMENT_LABELS[o.paymentStatus] || o.paymentStatus}</span>
               <select class="status-select" data-order-status aria-label="Order status">
                 ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
               </select>
             </header>
             <div class="order-body">
               <div class="order-customer">
-                <div class="pname">${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</div>
+                <div class="pname">${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}${o.userId ? '<span class="badge-user">Registered</span>' : ''}</div>
                 <div><a href="tel:${escapeHtml(c.phone)}">${escapeHtml(c.phone)}</a> · <a href="https://wa.me/${escapeHtml(waNumber)}" target="_blank" rel="noopener">WhatsApp</a></div>
                 ${c.email ? `<div><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></div>` : ''}
                 <div class="order-address">${escapeHtml(c.address)}<br><strong>${escapeHtml(c.city)}</strong></div>
@@ -136,6 +139,9 @@
                 ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
                 <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
                 ${o.safepay?.reference ? `<div class="pmeta">Safepay ref: ${escapeHtml(o.safepay.reference)}</div>` : ''}
+                ${o.manualPayment ? `<div class="pmeta">Paid to: ${escapeHtml([o.manualPayment.name, o.manualPayment.accountTitle, o.manualPayment.accountNumber || o.manualPayment.iban].filter(Boolean).join(' · '))}</div>
+                  <div><b>TID: ${escapeHtml(o.manualPayment.reference)}</b></div>
+                  ${o.manualPayment.receipt ? `<a class="receipt-link" href="/api/admin/receipts/${encodeURIComponent(o.manualPayment.receipt)}" target="_blank" rel="noopener">View payment screenshot</a>` : '<div class="pmeta">No screenshot</div>'}` : ''}
                 ${o.easypaisa ? `<div class="pmeta">Easypaisa order ref: ${escapeHtml(o.easypaisa.orderRef)}${o.easypaisa.transactionId ? ` · Transaction: ${escapeHtml(o.easypaisa.transactionId)}` : ''}</div>` : ''}
                 ${o.paymentStatus !== 'paid' ? `<div class="order-actions">
                   ${o.paymentMethod === 'easypaisa' ? '<button class="btn btn-sm btn-dark" data-check-payment>Check payment</button>' : ''}
@@ -193,6 +199,236 @@
     renderOrders();
   });
   $('refreshOrdersBtn').addEventListener('click', loadOrders);
+
+  // ---------- customers ----------
+  async function loadUsers() {
+    try {
+      state.users = await api('/api/admin/users');
+      renderUsers();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderUsers() {
+    const box = $('accountSettings');
+    box.querySelector('[name=allowRegistration]').checked = state.accountSettings.allowRegistration;
+    box.querySelector('[name=requireLogin]').checked = state.accountSettings.requireLogin;
+
+    const all = state.users;
+    const month = Date.now() - 30 * 24 * 3600 * 1000;
+    $('userStats').innerHTML = [
+      [all.length, 'Customers'],
+      [all.filter((u) => new Date(u.createdAt) > month).length, 'New this month'],
+      [all.filter((u) => u.orderCount > 0).length, 'Have ordered'],
+      [all.filter((u) => u.blocked).length, 'Blocked'],
+    ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join('');
+
+    const q = state.userSearch.toLowerCase();
+    const list = all.filter((u) => {
+      if (state.userFilter === 'active' && u.blocked) return false;
+      if (state.userFilter === 'blocked' && !u.blocked) return false;
+      return !q || `${u.firstName} ${u.lastName} ${u.email} ${u.phone} ${u.city}`.toLowerCase().includes(q);
+    });
+    $('userList').innerHTML = list.length
+      ? list
+          .map(
+            (u) => `
+        <div class="urow${u.blocked ? ' is-blocked' : ''}" data-id="${escapeHtml(u.id)}">
+          <div class="avatar">${escapeHtml((u.firstName[0] || '') + (u.lastName[0] || ''))}</div>
+          <div>
+            <div class="pname">${escapeHtml(u.firstName)} ${escapeHtml(u.lastName)}${u.blocked ? '<span class="badge-blocked">Blocked</span>' : ''}</div>
+            <div class="pmeta">${escapeHtml(u.email)} · <a href="tel:${escapeHtml(u.phone)}">${escapeHtml(u.phone)}</a>${u.city ? ` · ${escapeHtml(u.city)}` : ''}</div>
+            <div class="pmeta">Joined ${new Date(u.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}${u.lastLoginAt ? ` · Last login ${new Date(u.lastLoginAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}` : ''}</div>
+          </div>
+          <div class="ustats"><b>${u.orderCount} order(s)</b>${money(u.spent)}</div>
+          <div class="pactions">
+            <button class="btn btn-sm btn-dark" data-user-action="edit">Edit</button>
+            <button class="btn btn-sm btn-ghost" data-user-action="block">${u.blocked ? 'Unblock' : 'Block'}</button>
+            <button class="btn btn-sm btn-ghost" data-user-action="delete">Delete</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : `<div class="empty">${all.length ? 'No customers match.' : 'No customer accounts yet.'}</div>`;
+  }
+
+  async function saveUser(user, changes) {
+    const body = { ...user, ...changes };
+    const updated = await api(`/api/admin/users/${user.id}`, { method: 'PUT', body });
+    Object.assign(user, updated);
+    renderUsers();
+  }
+
+  $('accountSettings').addEventListener('change', async () => {
+    const box = $('accountSettings');
+    const body = {
+      allowRegistration: box.querySelector('[name=allowRegistration]').checked,
+      requireLogin: box.querySelector('[name=requireLogin]').checked,
+    };
+    try {
+      state.accountSettings = await api('/api/admin/account-settings', { method: 'PUT', body });
+      toast('Saved');
+    } catch (err) {
+      toast(err.message, true);
+      renderUsers();
+    }
+  });
+
+  $('userList').addEventListener('click', async (e) => {
+    const action = e.target.closest('[data-user-action]')?.dataset.userAction;
+    if (!action) return;
+    const user = state.users.find((u) => u.id === e.target.closest('.urow').dataset.id);
+    const name = `${user.firstName} ${user.lastName}`;
+    try {
+      if (action === 'edit') openUserEditor(user);
+      if (action === 'block' && confirm(user.blocked ? `Unblock ${name}?` : `Block ${name}? They will be logged out and cannot log in.`)) {
+        await saveUser(user, { blocked: !user.blocked });
+        toast(user.blocked ? 'Customer blocked' : 'Customer unblocked');
+      }
+      if (action === 'delete' && confirm(`Delete ${name}'s account? Their past orders stay in the Orders tab.`)) {
+        await api(`/api/admin/users/${user.id}`, { method: 'DELETE' });
+        state.users = state.users.filter((u) => u.id !== user.id);
+        renderUsers();
+        toast('Customer deleted');
+      }
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  const userForm = $('userForm');
+  const USER_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'address', 'city'];
+
+  function openUserEditor(user) {
+    state.editingUser = user;
+    userForm.reset();
+    USER_FIELDS.forEach((k) => (userForm[k].value = user[k] || ''));
+    userForm.blocked.checked = user.blocked;
+    $('userMeta').textContent = `${user.orderCount} order(s) · ${money(user.spent)} spent`;
+    $('userEditor').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeUserEditor() {
+    $('userEditor').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  $('userEditor').addEventListener('click', (e) => {
+    if (e.target === $('userEditor') || e.target.closest('[data-close]')) closeUserEditor();
+  });
+
+  userForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const changes = Object.fromEntries(USER_FIELDS.map((k) => [k, userForm[k].value]));
+    changes.blocked = userForm.blocked.checked;
+    changes.newPassword = userForm.newPassword.value;
+    $('saveUserBtn').disabled = true;
+    try {
+      await saveUser(state.editingUser, changes);
+      closeUserEditor();
+      toast('Customer saved');
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      $('saveUserBtn').disabled = false;
+    }
+  });
+
+  $('userSearch').addEventListener('input', (e) => {
+    state.userSearch = e.target.value.trim();
+    renderUsers();
+  });
+  $('userFilter').addEventListener('change', (e) => {
+    state.userFilter = e.target.value;
+    renderUsers();
+  });
+  $('refreshUsersBtn').addEventListener('click', loadUsers);
+
+  // ---------- payment settings ----------
+  const paymentForm = $('paymentForm');
+
+  async function loadPaymentSettings() {
+    try {
+      state.payment = await api('/api/admin/payment-settings');
+      renderPaymentSettings();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderPaymentSettings() {
+    const p = state.payment;
+    paymentForm.cod.checked = p.cod;
+    const onOff = (on) => (on ? 'ON' : 'OFF');
+    $('gatewayStatus').textContent = `Online gateways — Easypaisa: ${onOff(p.gateways.easypaisa)}, Safepay: ${onOff(p.gateways.safepay)}. These are switched on with the API keys on the server (see README).`;
+    $('manualList').innerHTML = p.manualAccounts.length
+      ? p.manualAccounts
+          .map(
+            (a, i) => `
+        <div class="manual-card${a.enabled ? '' : ' off'}" data-index="${i}">
+          <div class="manual-card-head">
+            <select data-field="type" aria-label="Type">
+              ${Object.entries(MANUAL_TYPES).map(([v, l]) => `<option value="${v}"${a.type === v ? ' selected' : ''}>${l}</option>`).join('')}
+            </select>
+            <label class="switch"><input type="checkbox" data-field="enabled"${a.enabled ? ' checked' : ''}><span></span> Show to customers</label>
+            <button type="button" class="btn btn-sm btn-ghost" data-remove-account>Remove</button>
+          </div>
+          <label>Bank / wallet name <small>e.g. Meezan Bank, JazzCash</small><input data-field="name" maxlength="80" value="${escapeHtml(a.name)}"></label>
+          <div class="row">
+            <label>Account title <input data-field="accountTitle" maxlength="80" value="${escapeHtml(a.accountTitle)}"></label>
+            <label>Account / mobile number <input data-field="accountNumber" maxlength="40" value="${escapeHtml(a.accountNumber)}"></label>
+          </div>
+          <label>IBAN <small>Optional, for banks</small><input data-field="iban" maxlength="40" value="${escapeHtml(a.iban)}"></label>
+          <label>Note for customers <small>Optional, e.g. “Send screenshot on WhatsApp”</small><input data-field="instructions" maxlength="400" value="${escapeHtml(a.instructions)}"></label>
+        </div>`
+          )
+          .join('')
+      : '<div class="empty">No accounts yet. Click “+ Add account”.</div>';
+  }
+
+  // Copies what is typed in the cards back into state, so re-rendering keeps it.
+  function readManualCards() {
+    paymentForm.querySelectorAll('.manual-card').forEach((card) => {
+      const a = state.payment.manualAccounts[Number(card.dataset.index)];
+      card.querySelectorAll('[data-field]').forEach((el) => (a[el.dataset.field] = el.type === 'checkbox' ? el.checked : el.value));
+    });
+  }
+
+  $('addManualBtn').addEventListener('click', () => {
+    readManualCards();
+    state.payment.manualAccounts.push({ type: 'bank', name: '', accountTitle: '', accountNumber: '', iban: '', instructions: '', enabled: true });
+    renderPaymentSettings();
+    paymentForm.querySelector('.manual-card:last-child [data-field=name]').focus();
+  });
+
+  $('manualList').addEventListener('click', (e) => {
+    const remove = e.target.closest('[data-remove-account]');
+    if (!remove || !confirm('Remove this account? Customers will no longer see it.')) return;
+    readManualCards();
+    state.payment.manualAccounts.splice(Number(remove.closest('.manual-card').dataset.index), 1);
+    renderPaymentSettings();
+  });
+
+  $('manualList').addEventListener('change', (e) => {
+    if (e.target.dataset.field === 'enabled') e.target.closest('.manual-card').classList.toggle('off', !e.target.checked);
+  });
+
+  paymentForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    readManualCards();
+    try {
+      state.payment = await api('/api/admin/payment-settings', {
+        method: 'PUT',
+        body: { cod: paymentForm.cod.checked, manualAccounts: state.payment.manualAccounts },
+      });
+      renderPaymentSettings();
+      toast('Payment settings saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   // ---------- products list ----------
   function renderProducts() {
@@ -365,6 +601,7 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('editor').hidden) closeEditor();
+    if (e.key === 'Escape' && !$('userEditor').hidden) closeUserEditor();
   });
 
   form.addEventListener('submit', async (e) => {
