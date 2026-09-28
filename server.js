@@ -24,6 +24,23 @@ SAFEPAY.apiUrl = SAFEPAY.env === 'production' ? 'https://api.getsafepay.com' : '
 SAFEPAY.checkoutUrl =
   SAFEPAY.env === 'production' ? 'https://getsafepay.com/checkout/pay' : 'https://sandbox.api.getsafepay.com/checkout/pay';
 
+// Easypaisa (Easypay hosted checkout). Credentials come from the Easypaisa merchant portal.
+// Username/password/account number are needed to confirm payments with Easypaisa's inquiry API,
+// because the result Easypaisa sends back to the browser is not signed.
+const EASYPAISA = {
+  env: process.env.EASYPAISA_ENV === 'production' ? 'production' : 'sandbox',
+  storeId: process.env.EASYPAISA_STORE_ID || '',
+  hashKey: process.env.EASYPAISA_HASH_KEY || '',
+  username: process.env.EASYPAISA_USERNAME || '',
+  password: process.env.EASYPAISA_PASSWORD || '',
+  accountNum: process.env.EASYPAISA_ACCOUNT_NUM || '',
+};
+EASYPAISA.enabled = Boolean(
+  EASYPAISA.storeId && [16, 24, 32].includes(Buffer.byteLength(EASYPAISA.hashKey)) &&
+    EASYPAISA.username && EASYPAISA.password && EASYPAISA.accountNum
+);
+EASYPAISA.baseUrl = EASYPAISA.env === 'production' ? 'https://easypay.easypaisa.com.pk' : 'https://easypaystg.easypaisa.com.pk';
+
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ---------- Storage ----------
@@ -168,6 +185,8 @@ function buildOrderItems(lines) {
   return [items, null];
 }
 
+const PAYMENT_METHODS = { cod: true, safepay: SAFEPAY.enabled, easypaisa: EASYPAISA.enabled };
+
 // What the customer is allowed to see about their own order.
 function publicOrder(o) {
   return {
@@ -212,6 +231,72 @@ function safepayCheckoutUrl(req, order) {
     webhooks: 'false',
   });
   return `${SAFEPAY.checkoutUrl}?${params}`;
+}
+
+// ---------- Easypaisa ----------
+
+// Easypay wants the amount with a decimal point, e.g. "2499.0"
+const easypaisaAmount = (n) => (Number.isInteger(n) ? n.toFixed(1) : String(n));
+
+// Expiry in Pakistan time (UTC+5, no daylight saving), format "YYYYMMDD HHmmss"
+function easypaisaExpiry(hours = 24) {
+  const d = new Date(Date.now() + (5 + hours) * 3600 * 1000).toISOString();
+  return `${d.slice(0, 10).replace(/-/g, '')} ${d.slice(11, 19).replace(/:/g, '')}`;
+}
+
+// merchantHashedReq: the fields sorted by name as "k=v&k=v", AES-ECB encrypted with the hash key, base64.
+function easypaisaHash(fields) {
+  const text = Object.keys(fields).sort().map((k) => `${k}=${fields[k]}`).join('&');
+  const key = Buffer.from(EASYPAISA.hashKey);
+  const cipher = crypto.createCipheriv(`aes-${key.length * 8}-ecb`, key, null);
+  return Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]).toString('base64');
+}
+
+// A page that immediately posts a form to Easypaisa (their checkout only accepts POST).
+function autoPostPage(action, fields) {
+  const inputs = Object.entries(fields)
+    .map(([k, v]) => `<input type="hidden" name="${escapeAttr(k)}" value="${escapeAttr(v)}">`)
+    .join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Redirecting to Easypaisa…</title></head>
+<body style="font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;text-align:center">
+<form id="f" method="POST" action="${escapeAttr(action)}">${inputs}<p>Taking you to Easypaisa…</p><button type="submit">Continue</button></form>
+<script>document.getElementById('f').submit()</script></body></html>`;
+}
+
+function escapeAttr(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Asks Easypaisa whether the order was really paid. Returns the transaction details.
+async function easypaisaInquire(orderRef) {
+  const res = await fetch(`${EASYPAISA.baseUrl}/easypay-service/rest/v4/inquire-transaction`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Credentials: Buffer.from(`${EASYPAISA.username}:${EASYPAISA.password}`).toString('base64'),
+    },
+    body: JSON.stringify({ orderId: orderRef, storeId: EASYPAISA.storeId, accountNum: EASYPAISA.accountNum }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.responseCode !== '0000') {
+    throw new Error(`Easypaisa inquiry failed (${res.status}): ${JSON.stringify(json).slice(0, 300)}`);
+  }
+  return json;
+}
+
+// Updates the order from Easypaisa's records. Returns true if it is paid.
+async function easypaisaSync(order) {
+  const tx = await easypaisaInquire(order.easypaisa.orderRef);
+  const paid = String(tx.transactionStatus).toUpperCase() === 'PAID' && Math.abs(Number(tx.transactionAmount) - order.total) < 0.01;
+  order.easypaisa.transactionStatus = str(String(tx.transactionStatus || ''), 40);
+  if (paid && order.paymentStatus !== 'paid') {
+    order.paymentStatus = 'paid';
+    order.easypaisa.transactionId = str(String(tx.transactionId || ''), 100);
+    order.paidAt = new Date().toISOString();
+  }
+  save();
+  return paid;
 }
 
 function removeUpload(src) {
@@ -263,7 +348,7 @@ const upload = multer({
 
 // Public API
 app.get('/api/store', (req, res) => {
-  res.json({ settings: store.settings, products: store.products, payments: { online: SAFEPAY.enabled } });
+  res.json({ settings: store.settings, products: store.products, payments: { safepay: SAFEPAY.enabled, easypaisa: EASYPAISA.enabled } });
 });
 
 // Orders
@@ -273,9 +358,9 @@ app.post('/api/orders', async (req, res, next) => {
     if (customerError) return res.status(400).json({ error: customerError });
     const [items, itemsError] = buildOrderItems(req.body.items);
     if (itemsError) return res.status(400).json({ error: itemsError });
-    const paymentMethod = req.body.paymentMethod === 'safepay' ? 'safepay' : 'cod';
-    if (paymentMethod === 'safepay' && !SAFEPAY.enabled) {
-      return res.status(400).json({ error: 'Online payment is not available right now. Please choose Cash on Delivery.' });
+    const paymentMethod = Object.hasOwn(PAYMENT_METHODS, req.body.paymentMethod) ? req.body.paymentMethod : 'cod';
+    if (!PAYMENT_METHODS[paymentMethod]) {
+      return res.status(400).json({ error: 'This payment method is not available right now. Please choose Cash on Delivery.' });
     }
 
     const order = {
@@ -300,13 +385,20 @@ app.post('/api/orders', async (req, res, next) => {
       }
     }
 
+    if (paymentMethod === 'easypaisa') {
+      order.easypaisa = { orderRef: `WAH${order.number}${order.id.slice(0, 6).toUpperCase()}` };
+    }
+
     store.nextOrderNumber += 1;
     store.orders.unshift(order);
     save();
     res.json({
       order: publicOrder(order),
       accessToken: order.accessToken,
-      redirect: paymentMethod === 'safepay' ? safepayCheckoutUrl(req, order) : null,
+      redirect:
+        paymentMethod === 'safepay' ? safepayCheckoutUrl(req, order)
+        : paymentMethod === 'easypaisa' ? `/api/payments/easypaisa/start/${order.id}/${order.accessToken}`
+        : null,
     });
   } catch (err) {
     next(err);
@@ -319,9 +411,9 @@ app.get('/api/orders/:id', (req, res) => {
   res.json(publicOrder(order));
 });
 
-function findOrderForPayment(req) {
+function findOrderForPayment(req, method = 'safepay') {
   const order = store.orders.find((o) => o.id === req.params.id);
-  return order && order.paymentMethod === 'safepay' && safeEqual(order.accessToken, req.params.token) ? order : null;
+  return order && order.paymentMethod === method && safeEqual(order.accessToken, req.params.token) ? order : null;
 }
 
 // Safepay sends the customer back here after paying. The signature proves the tracker really was paid.
@@ -440,9 +532,81 @@ app.delete('/api/admin/products/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Easypaisa step 1: post the order to Easypaisa's checkout page
+app.get('/api/payments/easypaisa/start/:id/:token', (req, res) => {
+  const order = findOrderForPayment(req, 'easypaisa');
+  if (!order || order.paymentStatus !== 'pending') return res.redirect(303, '/');
+  const fields = {
+    amount: easypaisaAmount(order.total),
+    autoRedirect: '1',
+    expiryDate: easypaisaExpiry(),
+    orderRefNum: order.easypaisa.orderRef,
+    postBackURL: `${baseUrl(req)}/api/payments/easypaisa/confirm/${order.id}/${order.accessToken}`,
+    storeId: EASYPAISA.storeId,
+  };
+  if (order.customer.email) fields.emailAddr = order.customer.email;
+  const mobile = order.customer.phone.replace(/\D/g, '').replace(/^92/, '0');
+  if (/^03\d{9}$/.test(mobile)) fields.mobileNum = mobile;
+  fields.merchantHashedReq = easypaisaHash(fields);
+  res.type('html').send(autoPostPage(`${EASYPAISA.baseUrl}/easypay/Index.jsf`, fields));
+});
+
+// Easypaisa step 2: Easypaisa sends back an auth_token, which must be posted to Confirm.jsf
+app.all('/api/payments/easypaisa/confirm/:id/:token', express.urlencoded({ extended: false }), (req, res) => {
+  const order = findOrderForPayment(req, 'easypaisa');
+  const authToken = str(req.query.auth_token || req.body?.auth_token, 500);
+  if (!order || !authToken) return res.redirect(303, '/?payment=cancelled');
+  res.type('html').send(
+    autoPostPage(`${EASYPAISA.baseUrl}/easypay/Confirm.jsf`, {
+      auth_token: authToken,
+      postBackURL: `${baseUrl(req)}/api/payments/easypaisa/status/${order.id}/${order.accessToken}`,
+    })
+  );
+});
+
+// Easypaisa step 3: the customer comes back. The status in the URL is not signed,
+// so the order is only marked paid after Easypaisa's inquiry API confirms it.
+app.all('/api/payments/easypaisa/status/:id/:token', express.urlencoded({ extended: false }), async (req, res) => {
+  const order = findOrderForPayment(req, 'easypaisa');
+  if (!order) return res.redirect(303, '/');
+  const query = new URLSearchParams({ order: order.id, t: order.accessToken });
+  if (order.paymentStatus === 'paid') return res.redirect(303, `/?${query}`);
+  const reported = str(req.query.status || req.body?.status, 10);
+  try {
+    if (await easypaisaSync(order)) return res.redirect(303, `/?${query}`);
+  } catch (err) {
+    console.error(err);
+  }
+  if (reported && reported !== '0000' && order.paymentStatus === 'pending') {
+    order.paymentStatus = 'failed';
+    order.status = 'cancelled';
+    save();
+    return res.redirect(303, '/?payment=cancelled');
+  }
+  query.set('payment', 'failed');
+  res.redirect(303, `/?${query}`);
+});
+
 // Admin: orders
 app.get('/api/admin/orders', requireAdmin, (req, res) => {
   res.json(store.orders.map(({ accessToken, ...o }) => o));
+});
+
+// Re-checks an Easypaisa order with Easypaisa (e.g. the customer closed the page after paying)
+app.post('/api/admin/orders/:id/check-payment', requireAdmin, async (req, res) => {
+  const order = store.orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  if (order.paymentMethod !== 'easypaisa' || !EASYPAISA.enabled) {
+    return res.status(400).json({ error: 'Only Easypaisa orders can be checked' });
+  }
+  try {
+    await easypaisaSync(order);
+  } catch (err) {
+    console.error(err);
+    return res.status(502).json({ error: 'Could not reach Easypaisa. Please try again.' });
+  }
+  const { accessToken, ...rest } = order;
+  res.json(rest);
 });
 
 app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
@@ -499,4 +663,9 @@ app.listen(PORT, () => {
     console.log('Default admin password is "admin123" - change it from Dashboard > Settings.');
   }
   console.log(SAFEPAY.enabled ? `Safepay online payments: ON (${SAFEPAY.env})` : 'Safepay online payments: OFF (set SAFEPAY_API_KEY and SAFEPAY_SECRET_KEY)');
+  console.log(
+    EASYPAISA.enabled
+      ? `Easypaisa payments: ON (${EASYPAISA.env})`
+      : 'Easypaisa payments: OFF (set EASYPAISA_STORE_ID, EASYPAISA_HASH_KEY, EASYPAISA_USERNAME, EASYPAISA_PASSWORD, EASYPAISA_ACCOUNT_NUM)'
+  );
 });

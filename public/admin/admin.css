@@ -100,7 +100,7 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
 .order-items > div { display: flex; justify-content: space-between; gap: 12px; }
 .order-items small { color: var(--muted); }
 .order-total { border-top: 1px solid var(--line); padding-top: 6px; font-weight: 700; }
-.order-items .btn { justify-self: start; }
+.order-items > .order-actions { justify-content: flex-start; gap: 6px; flex-wrap: wrap; }
 
 /* Settings */
 .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }

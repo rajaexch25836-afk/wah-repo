@@ -76,6 +76,7 @@
   // ---------- orders ----------
   const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
   const PAYMENT_LABELS = { unpaid: 'Unpaid', pending: 'Awaiting payment', paid: 'Paid', failed: 'Payment failed' };
+  const METHOD_LABELS = { cod: 'COD', safepay: 'Safepay', easypaisa: 'Easypaisa' };
 
   async function loadOrders() {
     try {
@@ -118,7 +119,7 @@
                 <div class="order-no">#${o.number}</div>
                 <div class="pmeta">${new Date(o.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
               </div>
-              <span class="pay-badge pay-${o.paymentStatus}">${o.paymentMethod === 'cod' ? 'COD' : 'Online'} · ${PAYMENT_LABELS[o.paymentStatus] || o.paymentStatus}</span>
+              <span class="pay-badge pay-${o.paymentStatus}">${METHOD_LABELS[o.paymentMethod] || o.paymentMethod} · ${PAYMENT_LABELS[o.paymentStatus] || o.paymentStatus}</span>
               <select class="status-select" data-order-status aria-label="Order status">
                 ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
               </select>
@@ -135,7 +136,11 @@
                 ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
                 <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
                 ${o.safepay?.reference ? `<div class="pmeta">Safepay ref: ${escapeHtml(o.safepay.reference)}</div>` : ''}
-                ${o.paymentStatus !== 'paid' ? '<button class="btn btn-sm btn-ghost" data-mark-paid>Mark as paid</button>' : ''}
+                ${o.easypaisa ? `<div class="pmeta">Easypaisa order ref: ${escapeHtml(o.easypaisa.orderRef)}${o.easypaisa.transactionId ? ` · Transaction: ${escapeHtml(o.easypaisa.transactionId)}` : ''}</div>` : ''}
+                ${o.paymentStatus !== 'paid' ? `<div class="order-actions">
+                  ${o.paymentMethod === 'easypaisa' ? '<button class="btn btn-sm btn-dark" data-check-payment>Check payment</button>' : ''}
+                  <button class="btn btn-sm btn-ghost" data-mark-paid>Mark as paid</button>
+                </div>` : ''}
               </div>
             </div>
           </article>`;
@@ -159,7 +164,22 @@
     if (!e.target.matches('[data-order-status]')) return;
     updateOrder(e.target.closest('.order').dataset.id, { status: e.target.value });
   });
-  $('orderList').addEventListener('click', (e) => {
+  $('orderList').addEventListener('click', async (e) => {
+    const check = e.target.closest('[data-check-payment]');
+    if (check) {
+      const id = e.target.closest('.order').dataset.id;
+      check.disabled = true;
+      try {
+        const updated = await api(`/api/admin/orders/${id}/check-payment`, { method: 'POST' });
+        Object.assign(state.orders.find((o) => o.id === id), updated);
+        renderOrders();
+        toast(updated.paymentStatus === 'paid' ? 'Payment confirmed by Easypaisa' : `Not paid yet (Easypaisa: ${updated.easypaisa.transactionStatus || 'no record'})`);
+      } catch (err) {
+        check.disabled = false;
+        toast(err.message, true);
+      }
+      return;
+    }
     if (!e.target.closest('[data-mark-paid]')) return;
     const order = state.orders.find((o) => o.id === e.target.closest('.order').dataset.id);
     if (confirm(`Mark order #${order.number} as paid?`)) updateOrder(order.id, { paymentStatus: 'paid' });

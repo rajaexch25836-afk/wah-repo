@@ -327,7 +327,7 @@
 
     const btn = $('placeOrderBtn');
     btn.disabled = true;
-    btn.textContent = paymentMethod === 'safepay' ? 'Taking you to payment…' : 'Placing order…';
+    btn.textContent = paymentMethod === 'cod' ? 'Placing order…' : 'Taking you to payment…';
     $('checkoutError').textContent = '';
     try {
       const res = await fetch('/api/orders', {
@@ -342,7 +342,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not place your order. Please try again.');
       if (data.redirect) {
-        // The bag is cleared only after Safepay confirms the payment
+        // The bag is cleared only after the payment is confirmed
         window.location.href = data.redirect;
         return;
       }
@@ -361,8 +361,8 @@
 
   function showOrder(order, paymentFailed = false) {
     const paid = order.paymentStatus === 'paid';
-    const failed = paymentFailed || (order.paymentMethod === 'safepay' && !paid);
-    const payText = order.paymentMethod === 'cod' ? 'Cash on delivery' : paid ? 'Paid online' : 'Payment not completed';
+    const failed = paymentFailed || (order.paymentMethod !== 'cod' && !paid);
+    const payText = order.paymentMethod === 'cod' ? 'Cash on delivery' : paid ? `Paid (${order.paymentMethod === 'easypaisa' ? 'Easypaisa' : 'online'})` : 'Payment not completed';
     const waText = `Hi ${state.settings.storeName}! I just placed order #${order.number} (${money(order.total)}).`;
     $('orderBody').innerHTML = `
       <div class="check${failed ? ' warn' : ''}">${failed ? '!' : '✓'}</div>
@@ -380,7 +380,7 @@
     openOverlay($('orderModal'));
   }
 
-  // Handles the return from Safepay (/?order=…&t=…) and cancelled payments (/?payment=cancelled)
+  // Handles the return from Safepay/Easypaisa (/?order=…&t=…) and cancelled payments (/?payment=cancelled)
   async function handleReturn() {
     const params = new URLSearchParams(location.search);
     if (!params.has('order') && !params.has('payment')) return;
@@ -472,7 +472,8 @@
       state.settings = data.settings;
       state.products = data.products;
       state.payments = data.payments || {};
-      $('payOnline').hidden = !state.payments.online;
+      $('payOnline').hidden = !state.payments.safepay;
+      $('payEasypaisa').hidden = !state.payments.easypaisa;
       loadCart();
       prefillCustomer();
       renderSettings();
