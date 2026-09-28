@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], editing: null, images: [], search: '', filter: 'all' };
+  const state = { settings: {}, products: [], orders: [], editing: null, images: [], search: '', filter: 'all', orderSearch: '', orderFilter: 'all' };
 
   document.querySelectorAll('[data-icon]').forEach((el) => (el.innerHTML = ICONS[el.dataset.icon] || ''));
 
@@ -43,6 +43,7 @@
     $('appView').hidden = false;
     renderProducts();
     fillSettings();
+    loadOrders();
   }
 
   $('loginForm').addEventListener('submit', async (e) => {
@@ -66,10 +67,112 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+      $('tab-orders').hidden = tab.dataset.tab !== 'orders';
       $('tab-products').hidden = tab.dataset.tab !== 'products';
       $('tab-settings').hidden = tab.dataset.tab !== 'settings';
     })
   );
+
+  // ---------- orders ----------
+  const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+  const PAYMENT_LABELS = { unpaid: 'Unpaid', pending: 'Awaiting payment', paid: 'Paid', failed: 'Payment failed' };
+
+  async function loadOrders() {
+    try {
+      state.orders = await api('/api/admin/orders');
+      renderOrders();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderOrders() {
+    const all = state.orders;
+    const active = all.filter((o) => o.status !== 'cancelled');
+    const newCount = all.filter((o) => o.status === 'new').length;
+    $('newOrdersBadge').textContent = newCount;
+    $('newOrdersBadge').hidden = !newCount;
+    $('orderStats').innerHTML = [
+      [newCount, 'New orders'],
+      [all.filter((o) => o.status === 'confirmed').length, 'To ship'],
+      [active.length, 'Total orders'],
+      [money(active.reduce((n, o) => n + o.total, 0)), 'Sales'],
+    ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join('');
+
+    const q = state.orderSearch.toLowerCase();
+    const list = all.filter((o) => {
+      if (state.orderFilter !== 'all' && o.status !== state.orderFilter) return false;
+      const c = o.customer;
+      return !q || `#${o.number} ${o.number} ${c.firstName} ${c.lastName} ${c.phone} ${c.city} ${c.email}`.toLowerCase().includes(q);
+    });
+
+    $('orderList').innerHTML = list.length
+      ? list
+          .map((o) => {
+            const c = o.customer;
+            const waNumber = c.phone.replace(/\D/g, '').replace(/^0/, '92');
+            return `
+          <article class="order status-${o.status}" data-id="${escapeHtml(o.id)}">
+            <header class="order-head">
+              <div>
+                <div class="order-no">#${o.number}</div>
+                <div class="pmeta">${new Date(o.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+              </div>
+              <span class="pay-badge pay-${o.paymentStatus}">${o.paymentMethod === 'cod' ? 'COD' : 'Online'} · ${PAYMENT_LABELS[o.paymentStatus] || o.paymentStatus}</span>
+              <select class="status-select" data-order-status aria-label="Order status">
+                ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </header>
+            <div class="order-body">
+              <div class="order-customer">
+                <div class="pname">${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</div>
+                <div><a href="tel:${escapeHtml(c.phone)}">${escapeHtml(c.phone)}</a> · <a href="https://wa.me/${escapeHtml(waNumber)}" target="_blank" rel="noopener">WhatsApp</a></div>
+                ${c.email ? `<div><a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a></div>` : ''}
+                <div class="order-address">${escapeHtml(c.address)}<br><strong>${escapeHtml(c.city)}</strong></div>
+                ${c.notes ? `<div class="order-notes">Note: ${escapeHtml(c.notes)}</div>` : ''}
+              </div>
+              <div class="order-items">
+                ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+                <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
+                ${o.safepay?.reference ? `<div class="pmeta">Safepay ref: ${escapeHtml(o.safepay.reference)}</div>` : ''}
+                ${o.paymentStatus !== 'paid' ? '<button class="btn btn-sm btn-ghost" data-mark-paid>Mark as paid</button>' : ''}
+              </div>
+            </div>
+          </article>`;
+          })
+          .join('')
+      : `<div class="empty">${all.length ? 'No orders match.' : 'No orders yet. They will show up here when customers check out.'}</div>`;
+  }
+
+  async function updateOrder(id, changes) {
+    try {
+      const updated = await api(`/api/admin/orders/${id}`, { method: 'PATCH', body: changes });
+      Object.assign(state.orders.find((o) => o.id === id), updated);
+      renderOrders();
+      toast('Order updated');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  $('orderList').addEventListener('change', (e) => {
+    if (!e.target.matches('[data-order-status]')) return;
+    updateOrder(e.target.closest('.order').dataset.id, { status: e.target.value });
+  });
+  $('orderList').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-mark-paid]')) return;
+    const order = state.orders.find((o) => o.id === e.target.closest('.order').dataset.id);
+    if (confirm(`Mark order #${order.number} as paid?`)) updateOrder(order.id, { paymentStatus: 'paid' });
+  });
+  $('orderSearch').addEventListener('input', (e) => {
+    state.orderSearch = e.target.value.trim();
+    renderOrders();
+  });
+  $('orderFilter').addEventListener('change', (e) => {
+    state.orderFilter = e.target.value;
+    renderOrders();
+  });
+  $('refreshOrdersBtn').addEventListener('click', loadOrders);
 
   // ---------- products list ----------
   function renderProducts() {

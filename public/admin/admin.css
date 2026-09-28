@@ -76,6 +76,32 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
 .pactions { display: flex; gap: 6px; }
 .empty { text-align: center; color: var(--muted); padding: 40px; background: var(--surface); border-radius: var(--radius); }
 
+/* Orders */
+.tab-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px; border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; }
+.order-list { display: grid; gap: 12px; }
+.order { background: var(--surface); border-radius: var(--radius); border-left: 4px solid var(--line); }
+.order.status-new { border-left-color: var(--accent); }
+.order.status-confirmed { border-left-color: #e9c46a; }
+.order.status-shipped { border-left-color: #5b8def; }
+.order.status-delivered { border-left-color: var(--green); }
+.order.status-cancelled { opacity: .6; }
+.order-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.order-no { font-weight: 700; font-size: 17px; }
+.pay-badge { margin-left: auto; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--bg); color: var(--muted); white-space: nowrap; }
+.pay-badge.pay-paid { background: #dff3e6; color: var(--green); }
+.pay-badge.pay-failed { background: #f9e0dc; color: var(--red); }
+.status-select { width: auto; padding: 6px 10px; font-weight: 600; }
+.order-body { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 14px 16px; }
+.order-customer { display: grid; gap: 4px; font-size: 14px; align-content: start; }
+.order-customer a { color: var(--ink); }
+.order-address { margin-top: 4px; white-space: pre-line; }
+.order-notes { color: var(--muted); font-style: italic; }
+.order-items { display: grid; gap: 6px; font-size: 14px; align-content: start; }
+.order-items > div { display: flex; justify-content: space-between; gap: 12px; }
+.order-items small { color: var(--muted); }
+.order-total { border-top: 1px solid var(--line); padding-top: 6px; font-weight: 700; }
+.order-items .btn { justify-self: start; }
+
 /* Settings */
 .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 .panel { background: var(--surface); border-radius: var(--radius); padding: 20px; display: grid; gap: 14px; margin-bottom: 16px; }
@@ -128,4 +154,6 @@ label small, .label small { font-weight: 400; color: var(--muted); font-size: 12
   .toggles, .pactions { grid-column: 1 / -1; }
   .pactions .btn { flex: 1; }
   .settings { grid-template-columns: 1fr; }
+  .order-head { flex-wrap: wrap; }
+  .order-body { grid-template-columns: 1fr; }
 }

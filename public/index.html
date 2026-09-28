@@ -101,18 +101,48 @@
 
   <!-- Cart drawer -->
   <div class="overlay" id="cartDrawer" hidden>
-    <aside class="drawer" role="dialog" aria-modal="true" aria-label="Your bag">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
       <div class="drawer-head">
-        <h2>Your bag</h2>
+        <h2 id="drawerTitle">Your bag</h2>
         <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
       </div>
       <div class="drawer-items" id="cartItems"></div>
+
+      <form class="drawer-items checkout-form" id="checkoutForm" hidden novalidate>
+        <button type="button" class="back-link" id="backToBag">← Back to bag</button>
+        <h3>Delivery details</h3>
+        <div class="field-row">
+          <label>First name <input name="firstName" autocomplete="given-name" maxlength="50" required></label>
+          <label>Last name <input name="lastName" autocomplete="family-name" maxlength="50" required></label>
+        </div>
+        <label>Contact number <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="03001234567" maxlength="20" required></label>
+        <label>Email <small>(optional)</small> <input name="email" type="email" autocomplete="email" maxlength="120"></label>
+        <label>Full address <textarea name="address" rows="3" autocomplete="street-address" placeholder="House #, street, area / sector" maxlength="300" required></textarea></label>
+        <label>City <input name="city" autocomplete="address-level2" maxlength="60" required></label>
+        <label>Order notes <small>(optional)</small> <textarea name="notes" rows="2" placeholder="Landmark, delivery time, etc." maxlength="300"></textarea></label>
+
+        <h3>Payment</h3>
+        <div class="pay-options">
+          <label class="pay-option"><input type="radio" name="paymentMethod" value="cod" checked><span><strong>Cash on delivery</strong><small>Pay when you receive your order</small></span></label>
+          <label class="pay-option" id="payOnline" hidden><input type="radio" name="paymentMethod" value="safepay"><span><strong>Pay online</strong><small>Debit/credit card, bank account or wallet — secured by Safepay</small></span></label>
+        </div>
+        <p class="form-error" id="checkoutError" role="alert"></p>
+      </form>
+
       <div class="drawer-foot">
         <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
-        <button class="btn btn-wa btn-block" id="checkoutBtn"><span class="icon" data-icon="whatsapp"></span> Order on WhatsApp</button>
-        <p class="note">Your order details will open in WhatsApp — just press send.</p>
+        <button class="btn btn-dark btn-block" id="checkoutBtn">Checkout</button>
+        <button class="btn btn-accent btn-block" id="placeOrderBtn" type="submit" form="checkoutForm" hidden>Place order</button>
       </div>
     </aside>
+  </div>
+
+  <!-- Order confirmation -->
+  <div class="overlay" id="orderModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="orderTitle">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div class="order-done" id="orderBody"></div>
+    </div>
   </div>
 
   <div class="toast" id="toast" hidden></div>

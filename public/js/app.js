@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], filter: 'all', query: '', sort: 'new', cart: [] };
+  const state = { settings: {}, products: [], payments: {}, filter: 'all', query: '', sort: 'new', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -171,7 +171,9 @@
         ${p.soldOut ? '' : `<div><div class="opt-label">Quantity</div><div class="qty"><button data-qty="-1" aria-label="Less">−</button><span id="qtyVal">1</span><button data-qty="1" aria-label="More">+</button></div></div>`}
         <div class="detail-actions">
           <button class="btn btn-dark btn-block" id="addBtn" ${p.soldOut ? 'disabled' : ''}>${p.soldOut ? 'Sold out' : 'Add to bag'}</button>
-          ${state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="buyNowBtn"><span class="icon">${ICONS.whatsapp}</span> ${p.soldOut ? 'Ask when it’s back' : 'Buy now on WhatsApp'}</button>` : ''}
+          ${p.soldOut
+            ? state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="askBtn"><span class="icon">${ICONS.whatsapp}</span> Ask when it’s back</button>` : ''
+            : '<button class="btn btn-accent btn-block" id="buyNowBtn">Buy now</button>'}
         </div>
       </div>`;
 
@@ -198,10 +200,12 @@
         toast('Added to your bag');
       }
       if (e.target.closest('#buyNowBtn')) {
-        const lines = p.soldOut
-          ? `Hi! Is "${p.name}" coming back in stock?`
-          : `Hi! I want to order:\n\n• ${p.name}${pick.size ? ` | Size: ${pick.size}` : ''}${pick.color ? ` | Colour: ${pick.color}` : ''}\n  Qty: ${pick.qty} × ${money(finalPrice(p))}\n\nTotal: ${money(finalPrice(p) * pick.qty)}\n\nName:\nAddress:\nCity:`;
-        window.open(whatsappLink(lines), '_blank', 'noopener');
+        addToCart(p, pick);
+        closeOverlay($('productModal'));
+        openCart('details');
+      }
+      if (e.target.closest('#askBtn')) {
+        window.open(whatsappLink(`Hi! Is "${p.name}" coming back in stock?`), '_blank', 'noopener');
       }
     };
     openOverlay($('productModal'));
@@ -243,7 +247,8 @@
     const total = lines.reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
     $('cartCount').textContent = count;
     $('cartTotal').textContent = money(total);
-    $('checkoutBtn').disabled = !lines.length || !state.settings.social?.whatsapp;
+    $('checkoutBtn').disabled = !lines.length;
+    if (!lines.length && state.step === 'details') setStep('bag');
     $('cartItems').innerHTML = lines.length
       ? lines
           .map(
@@ -262,25 +267,139 @@
       : '<p class="empty">Your bag is empty.</p>';
   }
 
-  function checkout() {
-    const lines = cartLines();
-    if (!lines.length) return;
-    const total = lines.reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
-    const text = [
-      `Hi ${state.settings.storeName}! I want to place an order:`,
-      '',
-      ...lines.map(
-        (l, i) =>
-          `${i + 1}. ${l.product.name}${l.size ? ` | Size: ${l.size}` : ''}${l.color ? ` | Colour: ${l.color}` : ''}\n   Qty: ${l.qty} × ${money(finalPrice(l.product))}`
-      ),
-      '',
-      `Total: ${money(total)}`,
-      '',
-      'Name:',
-      'Address:',
-      'City:',
-    ].join('\n');
-    window.open(whatsappLink(text), '_blank', 'noopener');
+  // ---------- checkout ----------
+  const checkoutForm = $('checkoutForm');
+  const CUSTOMER_FIELDS = ['firstName', 'lastName', 'phone', 'email', 'address', 'city'];
+
+  function setStep(step) {
+    state.step = step;
+    const details = step === 'details';
+    $('drawerTitle').textContent = details ? 'Checkout' : 'Your bag';
+    $('cartItems').hidden = details;
+    checkoutForm.hidden = !details;
+    $('checkoutBtn').hidden = details;
+    $('placeOrderBtn').hidden = !details;
+    $('checkoutError').textContent = '';
+    if (details) checkoutForm.scrollTop = 0;
+  }
+
+  function openCart(step = 'bag') {
+    setStep(cartLines().length ? step : 'bag');
+    openOverlay($('cartDrawer'));
+    if (state.step === 'details') setTimeout(() => checkoutForm.firstName.focus(), 50);
+  }
+
+  function prefillCustomer() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('customer') || '{}');
+      CUSTOMER_FIELDS.forEach((k) => saved[k] && (checkoutForm[k].value = saved[k]));
+    } catch {}
+  }
+
+  function validateCheckout() {
+    const f = checkoutForm;
+    const checks = [
+      [f.firstName, f.firstName.value.trim(), 'Please enter your first name'],
+      [f.lastName, f.lastName.value.trim(), 'Please enter your last name'],
+      [f.phone, /^\+?[\d\s-]{10,20}$/.test(f.phone.value.trim()) && f.phone.value.replace(/\D/g, '').length >= 10, 'Please enter a valid contact number'],
+      [f.email, !f.email.value.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.value.trim()), 'Please enter a valid email or leave it empty'],
+      [f.address, f.address.value.trim().length >= 10, 'Please enter your full address (house, street, area)'],
+      [f.city, f.city.value.trim(), 'Please enter your city'],
+    ];
+    checks.forEach(([el]) => el.classList.remove('invalid'));
+    const failed = checks.find(([, ok]) => !ok);
+    if (!failed) return true;
+    failed[0].classList.add('invalid');
+    failed[0].focus();
+    $('checkoutError').textContent = failed[2];
+    return false;
+  }
+
+  async function placeOrder(e) {
+    e.preventDefault();
+    if (!validateCheckout()) return;
+    const f = checkoutForm;
+    const customer = Object.fromEntries([...CUSTOMER_FIELDS, 'notes'].map((k) => [k, f[k].value.trim()]));
+    const paymentMethod = f.paymentMethod.value;
+    try {
+      localStorage.setItem('customer', JSON.stringify(Object.fromEntries(CUSTOMER_FIELDS.map((k) => [k, customer[k]]))));
+    } catch {}
+
+    const btn = $('placeOrderBtn');
+    btn.disabled = true;
+    btn.textContent = paymentMethod === 'safepay' ? 'Taking you to payment…' : 'Placing order…';
+    $('checkoutError').textContent = '';
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer,
+          paymentMethod,
+          items: cartLines().map((l) => ({ id: l.id, size: l.size, color: l.color, qty: l.qty })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not place your order. Please try again.');
+      if (data.redirect) {
+        // The bag is cleared only after Safepay confirms the payment
+        window.location.href = data.redirect;
+        return;
+      }
+      state.cart = [];
+      saveCart();
+      f.notes.value = '';
+      closeOverlay($('cartDrawer'));
+      showOrder(data.order);
+    } catch (err) {
+      $('checkoutError').textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Place order';
+    }
+  }
+
+  function showOrder(order, paymentFailed = false) {
+    const paid = order.paymentStatus === 'paid';
+    const failed = paymentFailed || (order.paymentMethod === 'safepay' && !paid);
+    const payText = order.paymentMethod === 'cod' ? 'Cash on delivery' : paid ? 'Paid online' : 'Payment not completed';
+    const waText = `Hi ${state.settings.storeName}! I just placed order #${order.number} (${money(order.total)}).`;
+    $('orderBody').innerHTML = `
+      <div class="check${failed ? ' warn' : ''}">${failed ? '!' : '✓'}</div>
+      <h2 id="orderTitle">${failed ? 'Payment not completed' : `Thank you, ${escapeHtml(order.firstName)}!`}</h2>
+      <p>${failed
+        ? `We could not confirm the payment for order #${order.number}. If money was deducted, please contact us with your order number.`
+        : `Your order <strong>#${order.number}</strong> has been placed. We will call you to confirm it.`}</p>
+      <div class="order-summary">
+        ${order.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${i.size ? ` (${escapeHtml(i.size)})` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+        <div class="sum-total"><span>Total</span><span>${money(order.total)}</span></div>
+        <div><span>Payment</span><span>${payText}</span></div>
+      </div>
+      ${state.settings.social?.whatsapp ? `<a class="btn btn-wa btn-block" href="${escapeHtml(whatsappLink(waText))}" target="_blank" rel="noopener"><span class="icon">${ICONS.whatsapp}</span> Message us on WhatsApp</a>` : ''}
+      <button class="btn btn-dark btn-block" data-close>Continue shopping</button>`;
+    openOverlay($('orderModal'));
+  }
+
+  // Handles the return from Safepay (/?order=…&t=…) and cancelled payments (/?payment=cancelled)
+  async function handleReturn() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('order') && !params.has('payment')) return;
+    history.replaceState(null, '', location.pathname);
+    if (params.get('payment') === 'cancelled') {
+      toast('Payment cancelled — your bag is still here');
+      openCart('details');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/orders/${encodeURIComponent(params.get('order'))}?t=${encodeURIComponent(params.get('t') || '')}`);
+      if (!res.ok) return;
+      const order = await res.json();
+      if (order.paymentStatus === 'paid') {
+        state.cart = [];
+        saveCart();
+      }
+      showOrder(order, params.get('payment') === 'failed');
+    } catch {}
   }
 
   // ---------- overlays ----------
@@ -327,7 +446,7 @@
     const card = e.target.closest('.card');
     if (card) openProduct(card.dataset.id);
   });
-  $('cartBtn').addEventListener('click', () => openOverlay($('cartDrawer')));
+  $('cartBtn').addEventListener('click', () => openCart());
   $('cartItems').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-remove]');
     if (!btn) return;
@@ -335,7 +454,16 @@
     state.cart = state.cart.filter((l) => !(l.id === line.id && l.size === line.size && l.color === line.color));
     saveCart();
   });
-  $('checkoutBtn').addEventListener('click', checkout);
+  $('checkoutBtn').addEventListener('click', () => {
+    setStep('details');
+    checkoutForm.firstName.focus();
+  });
+  $('backToBag').addEventListener('click', () => setStep('bag'));
+  checkoutForm.addEventListener('submit', placeOrder);
+  checkoutForm.addEventListener('input', (e) => {
+    e.target.classList.remove('invalid');
+    $('checkoutError').textContent = '';
+  });
 
   // ---------- boot ----------
   fetch('/api/store')
@@ -343,11 +471,15 @@
     .then((data) => {
       state.settings = data.settings;
       state.products = data.products;
+      state.payments = data.payments || {};
+      $('payOnline').hidden = !state.payments.online;
       loadCart();
+      prefillCustomer();
       renderSettings();
       renderChips();
       renderGrid();
       renderCart();
+      handleReturn();
     })
     .catch(() => {
       $('grid').innerHTML = '<p class="empty">Could not load products. Please refresh.</p>';

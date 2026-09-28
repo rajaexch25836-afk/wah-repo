@@ -28,7 +28,8 @@
     <header class="topbar">
       <div class="brand">Dashboard</div>
       <nav class="tabs">
-        <button class="tab active" data-tab="products">Products</button>
+        <button class="tab active" data-tab="orders">Orders <span class="tab-badge" id="newOrdersBadge" hidden></span></button>
+        <button class="tab" data-tab="products">Products</button>
         <button class="tab" data-tab="settings">Store &amp; Social</button>
       </nav>
       <div class="topbar-actions">
@@ -38,8 +39,26 @@
     </header>
 
     <main class="main">
+      <!-- Orders -->
+      <section id="tab-orders">
+        <div class="stats" id="orderStats"></div>
+        <div class="toolbar">
+          <input type="search" id="orderSearch" placeholder="Search by name, phone, city or order #…">
+          <select id="orderFilter">
+            <option value="all">All orders</option>
+            <option value="new">New</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="shipped">Shipped</option>
+            <option value="delivered">Delivered</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshOrdersBtn">Refresh</button>
+        </div>
+        <div class="order-list" id="orderList"></div>
+      </section>
+
       <!-- Products -->
-      <section id="tab-products">
+      <section id="tab-products" hidden>
         <div class="stats" id="stats"></div>
         <div class="toolbar">
           <input type="search" id="productSearch" placeholder="Search products…">
