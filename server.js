@@ -970,7 +970,9 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
 
 // Static files
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '30d' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache: the browser may keep a copy but must check with the server first,
+// so updated pages, scripts and styles show up right after the server is updated.
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html')));
 
 app.use((err, req, res, next) => {
