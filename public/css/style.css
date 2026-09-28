@@ -57,20 +57,34 @@ a { color: inherit; }
 .cart-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--accent); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 
 /* Home page slider */
-.slider { position: relative; max-width: 1200px; margin: 16px auto 0; padding: 0 16px; }
-.slider-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; border-radius: var(--radius); aspect-ratio: 21 / 9; background: var(--line); overscroll-behavior-x: contain; }
+.slider { position: relative; max-width: 1200px; margin: 16px auto 0; padding: 0 16px; --gap: 0px; }
+.slider-track { position: relative; display: flex; gap: var(--gap); overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; border-radius: var(--radius); overscroll-behavior-x: contain; }
 .slider-track::-webkit-scrollbar { display: none; }
-.slide { position: relative; flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; display: block; color: #fff; text-decoration: none; }
+.slide { position: relative; flex: 0 0 100%; min-width: 0; aspect-ratio: 21 / 9; scroll-snap-align: start; display: block; color: #fff; text-decoration: none; background: var(--line); overflow: hidden; }
 .slide img { width: 100%; height: 100%; object-fit: cover; }
 .slide-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 48px 28px 26px; background: linear-gradient(transparent, rgba(0, 0, 0, .55)); }
 .slide-caption h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(24px, 4vw, 44px); line-height: 1.05; margin: 0 0 6px; }
 .slide-caption p { margin: 0; max-width: 560px; font-size: 16px; opacity: .92; }
-.slider-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .9); font-size: 28px; line-height: 1; cursor: pointer; display: grid; place-items: center; box-shadow: var(--shadow); }
+/* Portrait: 4:5 pictures (like Instagram posts), 3 in view on computers */
+.slider-portrait { --gap: 12px; }
+.slider-portrait .slider-track { border-radius: 0; }
+.slider-portrait .slide { flex-basis: calc((100% - 2 * var(--gap)) / 3); aspect-ratio: 4 / 5; border-radius: var(--radius); }
+.slider-portrait .slide-caption { padding: 40px 18px 34px; }
+.slider-portrait .slide-caption h2 { font-size: clamp(20px, 2.4vw, 28px); }
+.slider-portrait .slide-caption p { font-size: 14px; }
+.slider.fits .slider-track { justify-content: center; }
+.slider-arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .9); font-size: 28px; line-height: 1; cursor: pointer; display: grid; place-items: center; box-shadow: var(--shadow); z-index: 1; }
 .slider-arrow.prev { left: 28px; }
 .slider-arrow.next { right: 28px; }
 .slider-dots { position: absolute; left: 0; right: 0; bottom: 12px; display: flex; justify-content: center; gap: 8px; pointer-events: none; }
+.slider-portrait .slider-dots { position: static; margin-top: 12px; }
 .slider-dots button { pointer-events: auto; width: 9px; height: 9px; padding: 0; border-radius: 5px; border: 0; background: rgba(255, 255, 255, .55); cursor: pointer; transition: width .25s, background .25s; }
 .slider-dots button.active { width: 24px; background: #fff; }
+.slider-portrait .slider-dots button { background: var(--line); }
+.slider-portrait .slider-dots button.active { background: var(--ink); }
+@media (max-width: 980px) {
+  .slider-portrait .slide { flex-basis: calc((100% - var(--gap)) / 2); }
+}
 .hero.has-slider .hero-art { display: none; }
 .hero.has-slider .hero-grid { grid-template-columns: 1fr; }
 .hero.has-slider { padding: 32px 0 16px; }
@@ -285,9 +299,14 @@ a { color: inherit; }
   /* 16px text in boxes stops iPhones from zooming in (and the page sliding sideways) when typing */
   input, select, textarea { font-size: 16px !important; }
   .slider { margin-top: 12px; padding: 0 12px; }
-  .slider-track { aspect-ratio: 4 / 3; }
+  /* Landscape on phones: 16:9, the middle of the picture */
+  .slide { aspect-ratio: 16 / 9; }
+  .slide-caption h2 { font-size: 22px; }
+  /* Portrait on phones: one picture at a time, with the next one peeking in so people know to swipe */
+  .slider-portrait { --gap: 10px; }
+  .slider-portrait .slide { flex-basis: 86%; aspect-ratio: 4 / 5; }
   .slider-arrow { display: none; }
-  .slide-caption { padding: 40px 18px 34px; }
+  .slide-caption { padding: 32px 16px 28px; }
   .slide-caption p { font-size: 14px; }
   .hero-stamp { width: 80px; height: 80px; font-size: 15px; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: 20px 12px; }
