@@ -953,6 +953,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     heroSubtitle: str(body.heroSubtitle, 300),
     categories: list(body.categories),
     slides: sanitizeSlides(body.slides),
+    sliderShape: body.sliderShape === 'portrait' ? 'portrait' : 'landscape',
     social: {
       facebook: safeUrl(social.facebook),
       instagram: safeUrl(social.instagram),

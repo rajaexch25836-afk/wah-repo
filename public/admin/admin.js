@@ -702,6 +702,7 @@
       heroSubtitle: f.heroSubtitle.value,
       categories: f.categories.value,
       slides: state.settings.slides || [],
+      sliderShape: state.settings.sliderShape || 'landscape',
       social: Object.fromEntries(['whatsapp', 'instagram', 'facebook', 'tiktok', 'youtube', 'email', 'phone'].map((k) => [k, f[k].value])),
     };
     try {
@@ -719,18 +720,42 @@
   });
 
   // ---------- home page slider ----------
+  const SHAPES = {
+    landscape: { ratio: 1920 / 820, size: '1920 × 820 px', minWidth: 1200, label: 'landscape' },
+    portrait: { ratio: 1080 / 1350, size: '1080 × 1350 px', minWidth: 700, label: 'portrait' },
+  };
+
+  // Tells the admin when a picture will be cut a lot or look blurry in the chosen shape
+  function slideAdvice(img) {
+    const shape = SHAPES[state.settings.sliderShape === 'portrait' ? 'portrait' : 'landscape'];
+    const { naturalWidth: w, naturalHeight: h } = img;
+    const note = img.closest('.slide-card').querySelector('[data-slide-note]');
+    const problems = [];
+    const ratio = w / h;
+    if (Math.abs(Math.log(ratio / shape.ratio)) > Math.log(1.35)) {
+      problems.push(`This picture is ${ratio > 1.1 ? 'wide' : ratio < 0.9 ? 'tall' : 'square'}, but the slider is ${shape.label} — a big part will be cut off.`);
+    }
+    if (w < shape.minWidth) problems.push('This picture is small and may look blurry.');
+    note.className = `slide-note${problems.length ? ' warn' : ''}`;
+    note.textContent = `${w} × ${h} px. ${problems.length ? `${problems.join(' ')} Best size: ${shape.size}.` : 'Good size for this shape.'}`;
+  }
+
   function renderSlides() {
     const slides = state.settings.slides || [];
+    const shape = state.settings.sliderShape === 'portrait' ? 'portrait' : 'landscape';
+    $('shapeOptions').querySelector(`[value=${shape}]`).checked = true;
+    $('slideList').dataset.shape = shape;
     $('slideUpload').hidden = slides.length >= 6;
     $('slideList').innerHTML = slides.length
       ? slides
           .map(
             (s, i) => `
         <div class="slide-card" data-index="${i}">
-          <img src="${escapeHtml(s.image)}" alt="">
+          <div class="slide-thumb"><img src="${escapeHtml(s.image)}" alt=""></div>
           <div class="slide-fields">
             <label>Heading <small>Optional</small><input data-slide-field="title" maxlength="80" value="${escapeHtml(s.title)}"></label>
             <label>Text <small>Optional</small><input data-slide-field="subtitle" maxlength="160" value="${escapeHtml(s.subtitle)}"></label>
+            <p class="slide-note" data-slide-note></p>
           </div>
           <div class="slide-actions">
             <button type="button" class="btn btn-sm btn-ghost" data-slide-move="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move left">←</button>
@@ -741,7 +766,16 @@
           )
           .join('')
       : '<div class="empty">No slider pictures yet. The store shows the normal home page.</div>';
+    $('slideList').querySelectorAll('.slide-thumb img').forEach((img) => {
+      if (img.complete && img.naturalWidth) slideAdvice(img);
+      else img.addEventListener('load', () => slideAdvice(img), { once: true });
+    });
   }
+
+  $('shapeOptions').addEventListener('change', (e) => {
+    state.settings.sliderShape = e.target.value;
+    saveSettings(e.target.value === 'portrait' ? 'Slider set to portrait' : 'Slider set to landscape');
+  });
 
   $('slideInput').addEventListener('change', async (e) => {
     const files = [...e.target.files].slice(0, 6 - (state.settings.slides || []).length);

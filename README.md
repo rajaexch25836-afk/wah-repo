@@ -12,7 +12,7 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - Naam (rename), price, sale price, description, sizes, colours change kar sakte hain
   - Pictures upload / remove / "Make main" kar sakte hain
   - Ek click me **On sale**, **Sold out**, **Trending** laga/hata sakte hain
-  - **Store & Social** tab me **Home page slider**: 6 tak pictures upload karein, har picture pe heading aur text (optional), aage peechay karein ya hatayein. Yeh store ke upar slide hoti hain (mobile pe ungli se swipe). Tabdeeli foran save hoti hai
+  - **Store & Social** tab me **Home page slider**: shape chunein — **Landscape** (chaudi banner, best size **1920 × 820 px**; phone pe beech ka hissa dikhta hai) ya **Portrait** (Instagram post jaisi, best size **1080 × 1350 px**; computer pe 3 saath, phone pe ek ek). Har picture ke neeche uska size likha aata hai aur agar shape ya size theek na ho to laal warning. 6 tak pictures upload karein, har picture pe heading aur text (optional), aage peechay karein ya hatayein. Yeh store ke upar slide hoti hain (mobile pe ungli se swipe). Tabdeeli foran save hoti hai
   - **Store & Social** tab me store ka naam, heading, announcement bar, categories aur social links (WhatsApp, Instagram, Facebook, TikTok, YouTube, Email, Phone) set kar sakte hain — jo field khali chhorenge woh website pe nahi dikhega
   - Password change kar sakte hain
 

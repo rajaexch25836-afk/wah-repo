@@ -95,34 +95,61 @@
   }
 
   // ---------- home page slider ----------
+  // Landscape: one wide picture at a time. Portrait: 3 side by side on computers, 2 on tablets, 1 on phones.
   const slider = { index: 0, timer: null };
+  const track = $('sliderTrack');
 
   function renderSlider() {
     const slides = state.settings.slides || [];
+    const portrait = state.settings.sliderShape === 'portrait';
     $('slider').hidden = !slides.length;
+    $('slider').classList.toggle('slider-portrait', portrait);
     $('hero').classList.toggle('has-slider', slides.length > 0);
     if (!slides.length) return;
-    $('sliderTrack').innerHTML = slides
+    track.innerHTML = slides
       .map(
         (s, i) => `
       <a class="slide" href="#shop" role="group" aria-roledescription="slide" aria-label="${i + 1} of ${slides.length}">
-        <img src="${escapeHtml(s.image)}" alt="${escapeHtml(s.title || state.settings.storeName)}"${i ? ' loading="lazy"' : ''}>
+        <img src="${escapeHtml(s.image)}" alt="${escapeHtml(s.title || state.settings.storeName)}"${i > 2 ? ' loading="lazy"' : ''}>
         ${s.title || s.subtitle ? `<div class="slide-caption">${s.title ? `<h2>${escapeHtml(s.title)}</h2>` : ''}${s.subtitle ? `<p>${escapeHtml(s.subtitle)}</p>` : ''}</div>` : ''}
       </a>`
       )
       .join('');
-    const many = slides.length > 1;
-    $('sliderDots').innerHTML = many ? slides.map((_, i) => `<button data-slide="${i}" aria-label="Go to picture ${i + 1}"></button>`).join('') : '';
-    $('slidePrev').hidden = $('slideNext').hidden = !many;
+    slider.index = 0;
+    track.scrollLeft = 0;
+    layoutSlider();
+  }
+
+  const slideEls = () => [...track.children];
+  const slideLeft = (el) => el.offsetLeft - track.firstElementChild.offsetLeft;
+  const maxScroll = () => track.scrollWidth - track.clientWidth;
+
+  // How many start positions can be reached (with 3 pictures in view, the last two cannot be first)
+  function stopCount() {
+    const els = slideEls();
+    const last = els.findIndex((el) => slideLeft(el) >= maxScroll() - 2);
+    return last === -1 ? els.length : last + 1;
+  }
+
+  // Dots, arrows and autoplay depend on the screen width, so they are rebuilt on resize
+  function layoutSlider() {
+    const stops = stopCount();
+    const moves = stops > 1;
+    $('slider').classList.toggle('fits', !moves);
+    $('sliderDots').innerHTML = moves ? Array.from({ length: stops }, (_, i) => `<button data-slide="${i}" aria-label="Go to picture ${i + 1}"></button>`).join('') : '';
+    $('slidePrev').hidden = $('slideNext').hidden = !moves;
+    slider.index = Math.min(slider.index, stops - 1);
     updateDots();
-    if (many) startAutoSlide();
+    if (moves) startAutoSlide();
+    else clearInterval(slider.timer);
   }
 
   function goToSlide(i) {
-    const track = $('sliderTrack');
-    const count = track.children.length;
-    slider.index = (i + count) % count;
-    track.scrollTo({ left: slider.index * track.clientWidth, behavior: 'smooth' });
+    const stops = stopCount();
+    slider.index = (i + stops) % stops;
+    const el = slideEls()[slider.index];
+    track.scrollTo({ left: Math.min(slideLeft(el), maxScroll()), behavior: 'smooth' });
+    updateDots();
   }
 
   function updateDots() {
@@ -131,27 +158,39 @@
 
   function startAutoSlide() {
     clearInterval(slider.timer);
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || stopCount() < 2) return;
     slider.timer = setInterval(() => goToSlide(slider.index + 1), 5000);
   }
 
-  // Swiping by hand updates the dots and restarts the timer
-  $('sliderTrack').addEventListener('scroll', () => {
-    const track = $('sliderTrack');
-    const i = Math.round(track.scrollLeft / track.clientWidth);
+  // Swiping by hand: the picture nearest the left edge becomes the current one
+  track.addEventListener('scroll', () => {
+    if (!track.children.length) return;
+    const atEnd = track.scrollLeft >= maxScroll() - 2;
+    const i = atEnd
+      ? stopCount() - 1
+      : slideEls().reduce((best, el, n) => (Math.abs(slideLeft(el) - track.scrollLeft) < Math.abs(slideLeft(slideEls()[best]) - track.scrollLeft) ? n : best), 0);
     if (i !== slider.index) {
       slider.index = i;
       updateDots();
     }
   }, { passive: true });
-  $('sliderTrack').addEventListener('touchstart', startAutoSlide, { passive: true });
+  track.addEventListener('touchstart', startAutoSlide, { passive: true });
   $('slidePrev').addEventListener('click', () => { goToSlide(slider.index - 1); startAutoSlide(); });
   $('slideNext').addEventListener('click', () => { goToSlide(slider.index + 1); startAutoSlide(); });
   $('sliderDots').addEventListener('click', (e) => {
     const dot = e.target.closest('[data-slide]');
     if (dot) { goToSlide(Number(dot.dataset.slide)); startAutoSlide(); }
   });
-  document.addEventListener('visibilitychange', () => (document.hidden ? clearInterval(slider.timer) : ($('sliderTrack').children.length > 1 && startAutoSlide())));
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!track.children.length) return;
+      layoutSlider();
+      track.scrollTo({ left: Math.min(slideLeft(slideEls()[slider.index]), maxScroll()) });
+    }, 150);
+  });
+  document.addEventListener('visibilitychange', () => (document.hidden ? clearInterval(slider.timer) : track.children.length && startAutoSlide()));
 
   // ---------- product grid ----------
   function renderChips() {

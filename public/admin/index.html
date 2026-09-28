@@ -122,7 +122,23 @@
         <form id="settingsForm" class="settings">
           <div class="panel panel-wide">
             <h2>Home page slider</h2>
-            <p class="hint">Up to 6 pictures that slide at the top of the store (customers can swipe them on mobile). Wide pictures (about 2:1) look best on computers; phones show the middle part a little taller, so keep text and faces in the centre. Changes here save straight away.</p>
+            <p class="hint">Up to 6 pictures that slide at the top of the store. Customers can swipe them on phones. Changes here save straight away.</p>
+            <div class="shape-options" id="shapeOptions">
+              <label class="shape-option">
+                <input type="radio" name="sliderShape" value="landscape">
+                <span class="shape-demo landscape"></span>
+                <span><strong>Landscape (wide banner)</strong>
+                  <small>Best size: <b>1920 × 820 px</b></small>
+                  <small>Computer: one wide picture across the page. Phone: the middle part is shown (a little taller), so keep faces and text in the centre.</small></span>
+              </label>
+              <label class="shape-option">
+                <input type="radio" name="sliderShape" value="portrait">
+                <span class="shape-demo portrait"></span>
+                <span><strong>Portrait (tall, like Instagram posts)</strong>
+                  <small>Best size: <b>1080 × 1350 px</b> (4:5)</small>
+                  <small>Computer: 3 pictures side by side. Phone: one big picture at a time, swipe for the next.</small></span>
+              </label>
+            </div>
             <div class="slide-list" id="slideList"></div>
             <label class="upload" id="slideUpload">
               <input type="file" id="slideInput" accept="image/*" multiple hidden>
