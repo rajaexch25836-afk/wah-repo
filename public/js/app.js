@@ -94,6 +94,65 @@
     if (heroPics[1]) $('heroCardB').style.backgroundImage = `url("${heroPics[1].images[0]}")`;
   }
 
+  // ---------- home page slider ----------
+  const slider = { index: 0, timer: null };
+
+  function renderSlider() {
+    const slides = state.settings.slides || [];
+    $('slider').hidden = !slides.length;
+    $('hero').classList.toggle('has-slider', slides.length > 0);
+    if (!slides.length) return;
+    $('sliderTrack').innerHTML = slides
+      .map(
+        (s, i) => `
+      <a class="slide" href="#shop" role="group" aria-roledescription="slide" aria-label="${i + 1} of ${slides.length}">
+        <img src="${escapeHtml(s.image)}" alt="${escapeHtml(s.title || state.settings.storeName)}"${i ? ' loading="lazy"' : ''}>
+        ${s.title || s.subtitle ? `<div class="slide-caption">${s.title ? `<h2>${escapeHtml(s.title)}</h2>` : ''}${s.subtitle ? `<p>${escapeHtml(s.subtitle)}</p>` : ''}</div>` : ''}
+      </a>`
+      )
+      .join('');
+    const many = slides.length > 1;
+    $('sliderDots').innerHTML = many ? slides.map((_, i) => `<button data-slide="${i}" aria-label="Go to picture ${i + 1}"></button>`).join('') : '';
+    $('slidePrev').hidden = $('slideNext').hidden = !many;
+    updateDots();
+    if (many) startAutoSlide();
+  }
+
+  function goToSlide(i) {
+    const track = $('sliderTrack');
+    const count = track.children.length;
+    slider.index = (i + count) % count;
+    track.scrollTo({ left: slider.index * track.clientWidth, behavior: 'smooth' });
+  }
+
+  function updateDots() {
+    $('sliderDots').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === slider.index));
+  }
+
+  function startAutoSlide() {
+    clearInterval(slider.timer);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    slider.timer = setInterval(() => goToSlide(slider.index + 1), 5000);
+  }
+
+  // Swiping by hand updates the dots and restarts the timer
+  $('sliderTrack').addEventListener('scroll', () => {
+    const track = $('sliderTrack');
+    const i = Math.round(track.scrollLeft / track.clientWidth);
+    if (i !== slider.index) {
+      slider.index = i;
+      updateDots();
+    }
+  }, { passive: true });
+  $('sliderTrack').addEventListener('touchstart', startAutoSlide, { passive: true });
+  $('slidePrev').addEventListener('click', () => { goToSlide(slider.index - 1); startAutoSlide(); });
+  $('slideNext').addEventListener('click', () => { goToSlide(slider.index + 1); startAutoSlide(); });
+  $('sliderDots').addEventListener('click', (e) => {
+    const dot = e.target.closest('[data-slide]');
+    if (dot) { goToSlide(Number(dot.dataset.slide)); startAutoSlide(); }
+  });
+  document.addEventListener('visibilitychange', () => (document.hidden ? clearInterval(slider.timer) : ($('sliderTrack').children.length > 1 && startAutoSlide())));
+
   // ---------- product grid ----------
   function renderChips() {
     const cats = state.settings.categories || [];
@@ -454,7 +513,18 @@
     const paid = order.paymentStatus === 'paid';
     const failed = paymentFailed || (!['cod', 'manual'].includes(order.paymentMethod) && !paid);
     const payText = paymentText(order);
-    const waText = `Hi ${state.settings.storeName}! I just placed order #${order.number} (${money(order.total)}).`;
+    const waText = [
+      `Hi ${state.settings.storeName}! I just placed order #${order.number}.`,
+      '',
+      ...order.items.map(
+        (i, n) =>
+          `${n + 1}. ${i.name}${i.size ? ` | Size: ${i.size}` : ''}${i.color ? ` | Colour: ${i.color}` : ''}\n   Qty: ${i.qty} × ${money(i.price)} = ${money(i.qty * i.price)}`
+      ),
+      '',
+      `Total: ${money(order.total)}`,
+      `Payment: ${payText}`,
+      `Name: ${order.firstName}`,
+    ].join('\n');
     $('orderBody').innerHTML = `
       <div class="check${failed ? ' warn' : ''}">${failed ? '!' : '✓'}</div>
       <h2 id="orderTitle">${failed ? 'Payment not completed' : `Thank you, ${escapeHtml(order.firstName)}!`}</h2>
@@ -496,7 +566,7 @@
   }
 
   // ---------- customer account ----------
-  const ORDER_STATUS_LABELS = { new: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+  const ORDER_STATUS_LABELS = { new: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled' };
 
   async function jsonFetch(url, body, method = 'POST') {
     const res = await fetch(url, {
@@ -605,12 +675,10 @@
     state.user = user;
     updateAccountUI();
     fillCheckoutFromUser();
+    closeOverlay($('accountModal'));
     if (state.afterLogin === 'checkout') {
       state.afterLogin = null;
-      closeOverlay($('accountModal'));
       openCart('details');
-    } else {
-      openAccount('profile');
     }
   }
 
@@ -761,6 +829,7 @@
       prefillCustomer();
       renderPayOptions();
       renderSettings();
+      renderSlider();
       renderChips();
       renderGrid();
       renderCart();

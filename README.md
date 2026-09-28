@@ -5,13 +5,14 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
 - **Customer site** (`/`) — mobile aur desktop dono pe sahi dikhti hai. Categories, search, sort, sale/sold-out badges, product pictures, size/colour select, bag (cart) aur **checkout**: customer first name, last name, contact number, email (optional), poora address, city aur notes bharta hai, phir **Cash on Delivery**, **Bank / Easypaisa / JazzCash transfer**, **Easypaisa** ya **Pay online (Safepay)** chunta hai.
 - **Customer account** — customer register / login kar sakta hai (email ya mobile number se). "My account" me apni orders ki halat, apni details aur password change. Login hone pe checkout me naam, phone aur address khud bhar jaata hai.
 - **Dashboard** (`/admin`) — password se login. Yahan se aap:
-  - **Orders** tab me har order customer ki poori detail ke saath dekh sakte hain (naam, phone, WhatsApp, address, items, total, payment), status badal sakte hain (New → Confirmed → Shipped → Delivered / Cancelled) aur COD order ko "Mark as paid" kar sakte hain. Easypaisa order pe **Check payment** dabane se Easypaisa se payment ki taaza halat aa jaati hai
+  - **Orders** tab me har order customer ki poori detail ke saath dekh sakte hain (naam, phone, WhatsApp, address, items, total, payment), status badal sakte hain (New → Confirmed → Shipped → Delivered / Returned / Rejected / Cancelled). Har order pe **Shipped, Delivered, Returned, Rejected** ke ek-click buttons hain. Upar har status ki ginti aur raqam, **Net sales** (Returned, Rejected aur Cancelled ke baghair) aur **Payment received** dikhte hain; kisi bhi card pe click karne se wohi orders filter ho jaate hain aur COD order ko "Mark as paid" kar sakte hain. Easypaisa order pe **Check payment** dabane se Easypaisa se payment ki taaza halat aa jaati hai
   - **Customers** tab: saare registered customers, unke orders aur kharcha; customer ki details edit, naya password set, **Block / Unblock** aur **Delete**. Yahin se "naye customers register kar saken" aur "order ke liye login zaroori" on/off hota hai
   - **Payments** tab: Cash on delivery on/off, aur **Bank / Easypaisa / JazzCash accounts** add / edit / hide / remove (bank ka naam, account title, account number, IBAN, customer ke liye note)
   - Product add / edit / delete kar sakte hain
   - Naam (rename), price, sale price, description, sizes, colours change kar sakte hain
   - Pictures upload / remove / "Make main" kar sakte hain
   - Ek click me **On sale**, **Sold out**, **Trending** laga/hata sakte hain
+  - **Store & Social** tab me **Home page slider**: 6 tak pictures upload karein, har picture pe heading aur text (optional), aage peechay karein ya hatayein. Yeh store ke upar slide hoti hain (mobile pe ungli se swipe). Tabdeeli foran save hoti hai
   - **Store & Social** tab me store ka naam, heading, announcement bar, categories aur social links (WhatsApp, Instagram, Facebook, TikTok, YouTube, Email, Phone) set kar sakte hain — jo field khali chhorenge woh website pe nahi dikhega
   - Password change kar sakte hain
 

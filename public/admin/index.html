@@ -52,6 +52,8 @@
             <option value="confirmed">Confirmed</option>
             <option value="shipped">Shipped</option>
             <option value="delivered">Delivered</option>
+            <option value="returned">Returned</option>
+            <option value="rejected">Rejected</option>
             <option value="cancelled">Cancelled</option>
           </select>
           <button class="btn btn-ghost" id="refreshOrdersBtn">Refresh</button>
@@ -118,6 +120,16 @@
       <!-- Settings -->
       <section id="tab-settings" hidden>
         <form id="settingsForm" class="settings">
+          <div class="panel panel-wide">
+            <h2>Home page slider</h2>
+            <p class="hint">Up to 6 pictures that slide at the top of the store (customers can swipe them on mobile). Wide pictures (about 2:1) look best on computers; phones show the middle part a little taller, so keep text and faces in the centre. Changes here save straight away.</p>
+            <div class="slide-list" id="slideList"></div>
+            <label class="upload" id="slideUpload">
+              <input type="file" id="slideInput" accept="image/*" multiple hidden>
+              <span>+ Add pictures</span>
+            </label>
+          </div>
+
           <div class="panel">
             <h2>Store details</h2>
             <label>Store name <input name="storeName" required maxlength="60"></label>
