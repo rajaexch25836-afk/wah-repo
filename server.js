@@ -252,7 +252,9 @@ function loginFailed(key) {
 
 const finalPrice = (p) => (p.onSale && p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price);
 
-const ORDER_STATUSES = ['new', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+const ORDER_STATUSES = ['new', 'confirmed', 'shipped', 'delivered', 'returned', 'rejected', 'cancelled'];
+// Orders in these states do not count towards sales
+const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
 const PAYMENT_STATUSES = ['unpaid', 'pending', 'paid', 'failed'];
 
 // Checks the customer's details. Returns [customer, error].
@@ -415,6 +417,18 @@ async function easypaisaSync(order) {
   }
   save();
   return paid;
+}
+
+// Home page slider: up to 6 pictures, each with an optional heading and line of text.
+function sanitizeSlides(input) {
+  return (Array.isArray(input) ? input : [])
+    .filter((s) => typeof s?.image === 'string' && s.image.startsWith('/uploads/'))
+    .slice(0, 6)
+    .map((s) => ({ image: s.image, title: str(s.title, 80), subtitle: str(s.subtitle, 160) }));
+}
+
+function isImageInUse(src) {
+  return store.products.some((p) => p.images?.includes(src)) || (store.settings.slides || []).some((s) => s.image === src);
 }
 
 function removeUpload(src) {
@@ -871,7 +885,7 @@ app.get('/api/admin/receipts/:file', requireAdmin, (req, res) => {
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   res.json(
     store.users.map((u) => {
-      const orders = store.orders.filter((o) => o.userId === u.id && o.status !== 'cancelled');
+      const orders = store.orders.filter((o) => o.userId === u.id && !LOST_STATUSES.includes(o.status));
       return { ...publicUser(u), orderCount: orders.length, spent: orders.reduce((n, o) => n + o.total, 0) };
     })
   );
@@ -929,6 +943,7 @@ app.put('/api/admin/payment-settings', requireAdmin, (req, res) => {
 app.put('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body || {};
   const social = body.social || {};
+  const oldSlides = store.settings.slides || [];
   store.settings = {
     storeName: str(body.storeName, 60) || store.settings.storeName,
     tagline: str(body.tagline, 160),
@@ -937,6 +952,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     heroTitle: str(body.heroTitle, 120),
     heroSubtitle: str(body.heroSubtitle, 300),
     categories: list(body.categories),
+    slides: sanitizeSlides(body.slides),
     social: {
       facebook: safeUrl(social.facebook),
       instagram: safeUrl(social.instagram),
@@ -947,6 +963,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
       email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(str(social.email, 120)) ? str(social.email, 120) : '',
     },
   };
+  oldSlides.filter((s) => !isImageInUse(s.image)).forEach((s) => removeUpload(s.image));
   save();
   res.json(store.settings);
 });

@@ -75,7 +75,10 @@
   );
 
   // ---------- orders ----------
-  const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', cancelled: 'Cancelled' };
+  const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled' };
+  const QUICK_STATUSES = ['shipped', 'delivered', 'returned', 'rejected'];
+  // Orders in these states do not count towards sales
+  const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
   const PAYMENT_LABELS = { unpaid: 'Unpaid', pending: 'Awaiting payment', paid: 'Paid', failed: 'Payment failed' };
   const METHOD_LABELS = { cod: 'COD', safepay: 'Safepay', easypaisa: 'Easypaisa', manual: 'Transfer' };
   const MANUAL_TYPES = { bank: 'Bank transfer', easypaisa: 'Easypaisa', jazzcash: 'JazzCash', other: 'Other' };
@@ -92,16 +95,25 @@
 
   function renderOrders() {
     const all = state.orders;
-    const active = all.filter((o) => o.status !== 'cancelled');
-    const newCount = all.filter((o) => o.status === 'new').length;
+    const sum = (list) => list.reduce((n, o) => n + o.total, 0);
+    const byStatus = (status) => all.filter((o) => o.status === status);
+    const active = all.filter((o) => !LOST_STATUSES.includes(o.status));
+    const newCount = byStatus('new').length;
     $('newOrdersBadge').textContent = newCount;
     $('newOrdersBadge').hidden = !newCount;
+    const card = (filter, value, label, sub = '') =>
+      `<button class="stat${filter !== 'all' && state.orderFilter === filter ? ' active' : ''}" data-stat-filter="${filter}"><b>${value}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</button>`;
+    const statusCard = (status, label) => card(status, byStatus(status).length, label, money(sum(byStatus(status))));
     $('orderStats').innerHTML = [
-      [newCount, 'New orders'],
-      [all.filter((o) => o.status === 'confirmed').length, 'To ship'],
-      [active.length, 'Total orders'],
-      [money(active.reduce((n, o) => n + o.total, 0)), 'Sales'],
-    ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join('');
+      card('new', newCount, 'New orders'),
+      statusCard('confirmed', 'To ship'),
+      statusCard('shipped', 'Shipped'),
+      statusCard('delivered', 'Delivered'),
+      statusCard('returned', 'Returned'),
+      statusCard('rejected', 'Rejected'),
+      card('all', money(sum(active)), 'Net sales', `${active.length} orders`),
+      card('all', money(sum(active.filter((o) => o.paymentStatus === 'paid'))), 'Payment received'),
+    ].join('');
 
     const q = state.orderSearch.toLowerCase();
     const list = all.filter((o) => {
@@ -127,6 +139,10 @@
                 ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
               </select>
             </header>
+            <div class="quick-status">
+              <span>Mark as:</span>
+              ${QUICK_STATUSES.map((st) => `<button class="qs qs-${st}${o.status === st ? ' on' : ''}" data-quick-status="${st}">${STATUS_LABELS[st]}</button>`).join('')}
+            </div>
             <div class="order-body">
               <div class="order-customer">
                 <div class="pname">${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}${o.userId ? '<span class="badge-user">Registered</span>' : ''}</div>
@@ -170,7 +186,24 @@
     if (!e.target.matches('[data-order-status]')) return;
     updateOrder(e.target.closest('.order').dataset.id, { status: e.target.value });
   });
+  $('orderStats').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-stat-filter]');
+    if (!card) return;
+    state.orderFilter = card.dataset.statFilter;
+    $('orderFilter').value = state.orderFilter;
+    renderOrders();
+  });
+
   $('orderList').addEventListener('click', async (e) => {
+    const quick = e.target.closest('[data-quick-status]');
+    if (quick) {
+      const order = state.orders.find((o) => o.id === e.target.closest('.order').dataset.id);
+      const status = quick.dataset.quickStatus;
+      if (order.status === status) return;
+      if (LOST_STATUSES.includes(status) && !confirm(`Mark order #${order.number} as ${STATUS_LABELS[status]}? It will no longer count in sales.`)) return;
+      updateOrder(order.id, { status });
+      return;
+    }
     const check = e.target.closest('[data-check-payment]');
     if (check) {
       const id = e.target.closest('.order').dataset.id;
@@ -654,11 +687,11 @@
     const f = settingsForm;
     ['storeName', 'tagline', 'currency', 'announcement', 'heroTitle', 'heroSubtitle'].forEach((k) => (f[k].value = s[k] || ''));
     f.categories.value = (s.categories || []).join(', ');
+    renderSlides();
     ['whatsapp', 'instagram', 'facebook', 'tiktok', 'youtube', 'email', 'phone'].forEach((k) => (f[k].value = s.social?.[k] || ''));
   }
 
-  settingsForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  async function saveSettings(message = 'Settings saved') {
     const f = settingsForm;
     const body = {
       storeName: f.storeName.value,
@@ -668,15 +701,86 @@
       heroTitle: f.heroTitle.value,
       heroSubtitle: f.heroSubtitle.value,
       categories: f.categories.value,
+      slides: state.settings.slides || [],
       social: Object.fromEntries(['whatsapp', 'instagram', 'facebook', 'tiktok', 'youtube', 'email', 'phone'].map((k) => [k, f[k].value])),
     };
     try {
       state.settings = await api('/api/admin/settings', { method: 'PUT', body });
       fillSettings();
-      toast('Settings saved');
+      toast(message);
     } catch (err) {
       toast(err.message, true);
     }
+  }
+
+  settingsForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveSettings();
+  });
+
+  // ---------- home page slider ----------
+  function renderSlides() {
+    const slides = state.settings.slides || [];
+    $('slideUpload').hidden = slides.length >= 6;
+    $('slideList').innerHTML = slides.length
+      ? slides
+          .map(
+            (s, i) => `
+        <div class="slide-card" data-index="${i}">
+          <img src="${escapeHtml(s.image)}" alt="">
+          <div class="slide-fields">
+            <label>Heading <small>Optional</small><input data-slide-field="title" maxlength="80" value="${escapeHtml(s.title)}"></label>
+            <label>Text <small>Optional</small><input data-slide-field="subtitle" maxlength="160" value="${escapeHtml(s.subtitle)}"></label>
+          </div>
+          <div class="slide-actions">
+            <button type="button" class="btn btn-sm btn-ghost" data-slide-move="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move left">←</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-slide-move="1" ${i === slides.length - 1 ? 'disabled' : ''} aria-label="Move right">→</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-slide-remove>Remove</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : '<div class="empty">No slider pictures yet. The store shows the normal home page.</div>';
+  }
+
+  $('slideInput').addEventListener('change', async (e) => {
+    const files = [...e.target.files].slice(0, 6 - (state.settings.slides || []).length);
+    e.target.value = '';
+    if (!files.length) return;
+    const body = new FormData();
+    files.forEach((f) => body.append('images', f));
+    toast('Uploading…');
+    try {
+      const { files: urls } = await api('/api/admin/upload', { method: 'POST', body });
+      state.settings.slides = [...(state.settings.slides || []), ...urls.map((image) => ({ image, title: '', subtitle: '' }))];
+      await saveSettings(`${urls.length} picture(s) added to the slider`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  $('slideList').addEventListener('click', (e) => {
+    const card = e.target.closest('.slide-card');
+    if (!card) return;
+    const slides = state.settings.slides;
+    const i = Number(card.dataset.index);
+    const move = e.target.closest('[data-slide-move]');
+    if (move) {
+      const j = i + Number(move.dataset.slideMove);
+      [slides[i], slides[j]] = [slides[j], slides[i]];
+      saveSettings('Slider order saved');
+    }
+    if (e.target.closest('[data-slide-remove]') && confirm('Remove this picture from the slider?')) {
+      slides.splice(i, 1);
+      saveSettings('Picture removed');
+    }
+  });
+
+  $('slideList').addEventListener('change', (e) => {
+    const input = e.target.closest('[data-slide-field]');
+    if (!input) return;
+    state.settings.slides[Number(input.closest('.slide-card').dataset.index)][input.dataset.slideField] = input.value;
+    saveSettings('Slider text saved');
   });
 
   $('passwordForm').addEventListener('submit', async (e) => {

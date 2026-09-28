@@ -31,7 +31,14 @@
   </header>
 
   <main>
-    <section class="hero">
+    <section class="slider" id="slider" hidden aria-roledescription="carousel" aria-label="Featured">
+      <div class="slider-track" id="sliderTrack"></div>
+      <button class="slider-arrow prev" id="slidePrev" aria-label="Previous picture">‹</button>
+      <button class="slider-arrow next" id="slideNext" aria-label="Next picture">›</button>
+      <div class="slider-dots" id="sliderDots"></div>
+    </section>
+
+    <section class="hero" id="hero">
       <div class="container hero-grid">
         <div class="hero-copy">
           <p class="eyebrow" id="tagline"></p>
