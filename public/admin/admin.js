@@ -807,15 +807,25 @@
     renderImages();
   });
 
+  // One picture per request, each made smaller first (the host accepts at most 4.5MB per request)
+  async function uploadImages(files) {
+    const urls = [];
+    for (const file of files) {
+      const body = new FormData();
+      body.append('images', await shrinkImage(file));
+      const { files: saved } = await api('/api/admin/upload', { method: 'POST', body });
+      urls.push(...saved);
+    }
+    return urls;
+  }
+
   $('imageInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
     if (!files.length) return;
-    const body = new FormData();
-    files.forEach((f) => body.append('images', f));
     toast('Uploading…');
     try {
-      const { files: urls } = await api('/api/admin/upload', { method: 'POST', body });
+      const urls = await uploadImages(files);
       state.images.push(...urls);
       renderImages();
       toast(`${urls.length} picture(s) uploaded`);
@@ -976,11 +986,9 @@
     const files = [...e.target.files].slice(0, 6 - (state.settings.slides || []).length);
     e.target.value = '';
     if (!files.length) return;
-    const body = new FormData();
-    files.forEach((f) => body.append('images', f));
     toast('Uploading…');
     try {
-      const { files: urls } = await api('/api/admin/upload', { method: 'POST', body });
+      const urls = await uploadImages(files);
       state.settings.slides = [...(state.settings.slides || []), ...urls.map((image) => ({ image, title: '', subtitle: '' }))];
       await saveSettings(`${urls.length} picture(s) added to the slider`);
     } catch (err) {

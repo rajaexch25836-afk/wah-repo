@@ -6,12 +6,14 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "reset-admin": "node scripts/reset-admin.js"
+    "reset-admin": "node scripts/reset-admin.js",
+    "test": "node --check server.js && node --check lib/storage.js && node --check scripts/reset-admin.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.0",
     "express": "^4.21.2",
     "multer": "^2.0.2",
     "qrcode": "^1.5.4"

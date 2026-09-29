@@ -29,3 +29,34 @@ window.socialLinks = (social = {}) => {
   if (social.phone) links.push({ key: 'phone', label: 'Call', href: `tel:${social.phone}` });
   return links;
 };
+
+// Makes a picture smaller (max 1600px, JPEG) before uploading, so it uploads fast and stays
+// under the hosting's upload limit. GIFs and pictures that are already small are sent as they are.
+window.shrinkImage = (file, maxSize = 1600) =>
+  new Promise((resolve) => {
+    if (!/^image\/(jpeg|png|webp|avif)$/.test(file.type)) return resolve(file);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      if (scale === 1 && file.size < 1.5 * 1024 * 1024) return resolve(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; // transparent PNGs get a white background in JPEG
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(
+        (blob) => resolve(blob && blob.size < file.size ? new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file),
+        'image/jpeg',
+        0.85
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });

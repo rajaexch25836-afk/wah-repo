@@ -2,15 +2,11 @@ const express = require('express');
 const multer = require('multer');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
-const fs = require('fs');
 const path = require('path');
+const storage = require('./lib/storage');
+const SEED = require('./data/seed.json');
 
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
-const STORE_FILE = path.join(DATA_DIR, 'store.json');
-const SEED_FILE = path.join(DATA_DIR, 'seed.json');
-const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
-const RECEIPT_DIR = path.join(DATA_DIR, 'receipts'); // payment screenshots: private, admin only
 const DEFAULT_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const USER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -44,9 +40,6 @@ EASYPAISA.enabled = Boolean(
 );
 EASYPAISA.baseUrl = EASYPAISA.env === 'production' ? 'https://easypay.easypaisa.com.pk' : 'https://easypaystg.easypaisa.com.pk';
 
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-fs.mkdirSync(RECEIPT_DIR, { recursive: true });
-
 // ---------- Storage ----------
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -63,15 +56,22 @@ function verifyPassword(password, stored) {
 
 let freshStore = false; // true on the very first start, when the store is created from seed.json
 
-function loadStore() {
-  if (!fs.existsSync(STORE_FILE)) {
+// The store is loaded at the start of every API request (see the /api middleware below),
+// so every running copy of the server sees the latest data.
+let store = null;
+let dirty = false;
+
+async function loadStore() {
+  const data = await storage.loadData();
+  if (!data) {
     freshStore = true;
-    const seed = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
+    const seed = withDefaults(structuredClone(SEED));
     seed.admin = { passwordHash: hashPassword(DEFAULT_PASSWORD), mustChangePassword: true };
-    writeStore(withDefaults(seed));
+    await storage.saveData(seed);
     return seed;
   }
-  return withDefaults(JSON.parse(fs.readFileSync(STORE_FILE, 'utf8')));
+  if (!data.secret) dirty = true; // withDefaults creates it, keep it
+  return withDefaults(data);
 }
 
 // Fills in anything an older store.json does not have yet.
@@ -87,16 +87,9 @@ function withDefaults(data) {
   return data;
 }
 
-function writeStore(data) {
-  const tmp = `${STORE_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, STORE_FILE);
-}
-
-let store = loadStore();
-
+// Changes are written once, just before the response is sent.
 function save() {
-  writeStore(store);
+  dirty = true;
 }
 
 // ---------- Helpers ----------
@@ -130,7 +123,7 @@ function sanitizeProduct(input, existing = {}) {
   const price = num(input.price);
   const salePrice = input.salePrice === '' || input.salePrice == null ? null : num(input.salePrice);
   const images = Array.isArray(input.images)
-    ? input.images.filter((src) => typeof src === 'string' && src.startsWith('/uploads/')).slice(0, 12)
+    ? input.images.filter(storage.isUploadUrl).slice(0, 12)
     : existing.images || [];
   return {
     ...existing,
@@ -428,7 +421,7 @@ async function easypaisaSync(order) {
 // Home page slider: up to 6 pictures, each with an optional heading and line of text.
 function sanitizeSlides(input) {
   return (Array.isArray(input) ? input : [])
-    .filter((s) => typeof s?.image === 'string' && s.image.startsWith('/uploads/'))
+    .filter((s) => storage.isUploadUrl(s?.image))
     .slice(0, 6)
     .map((s) => ({ image: s.image, title: str(s.title, 80), subtitle: str(s.subtitle, 160) }));
 }
@@ -438,9 +431,7 @@ function isImageInUse(src) {
 }
 
 function removeUpload(src) {
-  if (typeof src !== 'string' || !src.startsWith('/uploads/')) return;
-  const file = path.join(UPLOAD_DIR, path.basename(src));
-  fs.promises.unlink(file).catch(() => {});
+  storage.removeImage(src);
 }
 
 // ---------- Admin security: strong password + Google Authenticator ----------
@@ -538,17 +529,37 @@ function checkSecondFactor(code) {
 
 // ---------- Auth ----------
 
-const sessions = new Map();
-const loginTickets = new Map(); // password was right, waiting for the Google Authenticator code
-let pendingTotp = null; // secret being set up, until the first code confirms it
+// Admin login cookie: "admin.expiry.version.signature". It is signed instead of kept in memory,
+// so it works on every copy of the server. Raising sessionVersion logs out every device.
+const sign = (payload) => crypto.createHmac('sha256', store.secret).update(payload).digest('base64url');
+const adminSessionVersion = () => String(store.admin.sessionVersion || 1);
 
 function startAdminSession(res) {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { expires: Date.now() + SESSION_TTL_MS });
+  const payload = `admin.${Date.now() + SESSION_TTL_MS}.${adminSessionVersion()}`;
   res.setHeader(
     'Set-Cookie',
-    `admin_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${PUBLIC_URL.startsWith('https://') ? '; Secure' : ''}`
+    `admin_session=${payload}.${sign(payload)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secureFlag()}`
   );
+}
+
+function validAdminSession(req) {
+  const [kind, exp, version, sig] = (parseCookies(req.headers.cookie).admin_session || '').split('.');
+  return (
+    kind === 'admin' && Boolean(sig) && safeEqual(sign(`${kind}.${exp}.${version}`), sig) &&
+    Number(exp) > Date.now() && version === adminSessionVersion()
+  );
+}
+
+// Password was right, waiting for the Google Authenticator code (5 minutes).
+// Tied to the password, so it stops working if the password changes.
+function loginTicket() {
+  const exp = Date.now() + 5 * 60 * 1000;
+  return `${exp}.${sign(`ticket.${exp}.${store.admin.passwordHash}`)}`;
+}
+
+function validLoginTicket(ticket) {
+  const [exp, sig] = String(ticket || '').split('.');
+  return Boolean(sig) && Number(exp) > Date.now() && safeEqual(sign(`ticket.${exp}.${store.admin.passwordHash}`), sig);
 }
 
 function parseCookies(header = '') {
@@ -559,13 +570,7 @@ function parseCookies(header = '') {
 
 // Logged in (enough to set a new password)
 function requireAdminSession(req, res, next) {
-  const token = parseCookies(req.headers.cookie).admin_session;
-  const session = token && sessions.get(token);
-  if (!session || session.expires < Date.now()) {
-    if (token) sessions.delete(token);
-    return res.status(401).json({ error: 'Not logged in' });
-  }
-  req.adminToken = token;
+  if (!validAdminSession(req)) return res.status(401).json({ error: 'Not logged in' });
   next();
 }
 
@@ -589,12 +594,11 @@ app.use(express.json({ limit: '1mb' }));
 // so nothing but images can ever be served from these folders.
 const IMAGE_EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif' };
 
-function imageUploader(destination, limits) {
+// Files are held in memory, then saved by lib/storage.js (a folder, or Vercel Blob).
+// The dashboard and checkout shrink pictures first, because Vercel accepts at most 4.5MB per request.
+function imageUploader(limits) {
   return multer({
-    storage: multer.diskStorage({
-      destination,
-      filename: (req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${IMAGE_EXT[file.mimetype]}`),
-    }),
+    storage: multer.memoryStorage(),
     limits,
     fileFilter: (req, file, cb) => {
       const ok = Object.hasOwn(IMAGE_EXT, file.mimetype);
@@ -603,8 +607,75 @@ function imageUploader(destination, limits) {
   });
 }
 
-const upload = imageUploader(UPLOAD_DIR, { fileSize: 8 * 1024 * 1024, files: 12 });
-const receiptUpload = imageUploader(RECEIPT_DIR, { fileSize: 5 * 1024 * 1024, files: 1 });
+const upload = imageUploader({ fileSize: 8 * 1024 * 1024, files: 12 });
+const receiptUpload = imageUploader({ fileSize: 5 * 1024 * 1024, files: 1 });
+
+// ---------- Loading and saving the store around every API request ----------
+
+// Requests are handled one at a time on each copy of the server, and requests that may
+// change something also hold a lock shared by all copies (on Vercel), so no change is lost.
+let queue = Promise.resolve();
+
+app.use('/api', (req, res, next) => {
+  const missing = storage.cloud ? storage.missingSetup() : [];
+  if (missing.length) {
+    return res.status(503).json({ error: `Store setup is not finished. Connect in Vercel > Storage: ${missing.join(', ')}` });
+  }
+  const readOnly = req.method === 'GET' && req.path === '/store';
+  let finish;
+  const done = new Promise((resolve) => (finish = resolve));
+  const turn = queue;
+  queue = queue.then(() => done);
+
+  turn.then(async () => {
+    let unlock = async () => {};
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(timer);
+      Promise.resolve(unlock()).finally(finish);
+    };
+    const timer = setTimeout(release, 60000); // never block the queue forever
+
+    try {
+      if (!readOnly) unlock = await storage.lock();
+      dirty = false;
+      store = await loadStore();
+    } catch (err) {
+      console.error(err);
+      release();
+      return res.status(503).json({ error: 'The store could not load its data. Please try again.' });
+    }
+
+    // Write the changes before the answer goes out, so they are never lost.
+    const end = res.end;
+    let ending = false;
+    res.end = function (...args) {
+      if (ending) return this;
+      ending = true;
+      const changes = dirty && !readOnly ? store : null;
+      dirty = false;
+      Promise.resolve(changes && storage.saveData(changes))
+        .catch((err) => {
+          console.error(err);
+          if (!res.headersSent) {
+            const body = JSON.stringify({ error: 'Your change could not be saved. Please try again.' });
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Content-Length', Buffer.byteLength(body));
+            args = [body];
+          }
+        })
+        .then(() => {
+          end.apply(res, args);
+          release();
+        });
+      return this;
+    };
+    next();
+  });
+});
 
 // Public API
 app.get('/api/store', (req, res) => {
@@ -769,12 +840,19 @@ app.post('/api/orders/:id/receipt', (req, res) => {
     return res.status(404).json({ error: 'Order not found' });
   }
   if (order.manualPayment.receipt) return res.status(400).json({ error: 'A screenshot was already sent for this order' });
-  receiptUpload.single('receipt')(req, res, (err) => {
+  receiptUpload.single('receipt')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Please choose a screenshot' });
-    order.manualPayment.receipt = req.file.filename;
-    save();
-    res.json({ ok: true });
+    try {
+      const { file, url } = await storage.saveReceipt(req.file.buffer, IMAGE_EXT[req.file.mimetype], req.file.mimetype);
+      order.manualPayment.receipt = file;
+      if (url) order.manualPayment.receiptUrl = url;
+      save();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Could not save the screenshot. Please try again.' });
+    }
   });
 });
 
@@ -829,11 +907,7 @@ app.post('/api/admin/login', (req, res) => {
     loginFailed(key);
     return res.status(401).json({ error: 'Wrong password' });
   }
-  if (store.admin.totp) {
-    const ticket = crypto.randomBytes(24).toString('hex');
-    loginTickets.set(ticket, { expires: Date.now() + 5 * 60 * 1000 });
-    return res.json({ twoFactor: true, ticket });
-  }
+  if (store.admin.totp) return res.json({ twoFactor: true, ticket: loginTicket() });
   failedLogins.delete(key);
   startAdminSession(res);
   res.json({ ok: true, mustChangePassword: Boolean(store.admin.mustChangePassword) });
@@ -843,22 +917,19 @@ app.post('/api/admin/login', (req, res) => {
 app.post('/api/admin/login/code', (req, res) => {
   const key = `admin:${req.ip}`;
   if (loginBlocked(key)) return res.status(429).json({ error: 'Too many wrong tries. Please wait 15 minutes.' });
-  const ticket = loginTickets.get(str(req.body.ticket, 100));
-  if (!ticket || ticket.expires < Date.now()) {
+  if (!validLoginTicket(str(req.body.ticket, 200))) {
     return res.status(401).json({ error: 'Login timed out. Please enter your password again.', restart: true });
   }
   if (!checkSecondFactor(str(req.body.code, 20))) {
     loginFailed(key);
     return res.status(401).json({ error: WRONG_CODE });
   }
-  loginTickets.delete(str(req.body.ticket, 100));
   failedLogins.delete(key);
   startAdminSession(res);
   res.json({ ok: true, mustChangePassword: Boolean(store.admin.mustChangePassword) });
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  sessions.delete(parseCookies(req.headers.cookie).admin_session);
   res.setHeader('Set-Cookie', 'admin_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
   res.json({ ok: true });
 });
@@ -884,8 +955,9 @@ app.post('/api/admin/password', requireAdminSession, (req, res) => {
   store.admin.mustChangePassword = false;
   store.admin.passwordPolicy = 2;
   store.admin.passwordChangedAt = new Date().toISOString();
-  // Log out every other device
-  for (const token of sessions.keys()) if (token !== req.adminToken) sessions.delete(token);
+  // Log out every other device, and keep this one logged in
+  store.admin.sessionVersion = Number(adminSessionVersion()) + 1;
+  startAdminSession(res);
   save();
   res.json({ ok: true });
 });
@@ -897,7 +969,8 @@ app.post('/api/admin/2fa/setup', requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: 'Password is wrong' });
     }
     const secret = base32Encode(crypto.randomBytes(20));
-    pendingTotp = { secret, expires: Date.now() + 10 * 60 * 1000 };
+    store.admin.pendingTotp = { secret, expires: Date.now() + 10 * 60 * 1000 };
+    save();
     const issuer = store.settings.storeName || 'Store';
     const label = encodeURIComponent(`${issuer}:admin`);
     const uri = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
@@ -909,13 +982,14 @@ app.post('/api/admin/2fa/setup', requireAdmin, async (req, res, next) => {
 
 // Step 2 — the first code from the app switches it on and gives the recovery codes (shown once)
 app.post('/api/admin/2fa/enable', requireAdmin, (req, res) => {
+  const pendingTotp = store.admin.pendingTotp;
   if (!pendingTotp || pendingTotp.expires < Date.now()) {
     return res.status(400).json({ error: 'Setup timed out. Please start again.' });
   }
   const counter = checkTotp(pendingTotp.secret, str(req.body.code, 20));
   if (counter === null) return res.status(400).json({ error: WRONG_CODE });
   store.admin.totp = { secret: pendingTotp.secret, lastCounter: counter, enabledAt: new Date().toISOString() };
-  pendingTotp = null;
+  delete store.admin.pendingTotp;
   const recoveryCodes = newRecoveryCodes();
   save();
   res.json({ recoveryCodes });
@@ -934,9 +1008,16 @@ app.post('/api/admin/2fa/disable', requireAdmin, (req, res) => {
 
 // Images
 app.post('/api/admin/upload', requireAdmin, (req, res) => {
-  upload.array('images', 12)(req, res, (err) => {
+  upload.array('images', 12)(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
-    res.json({ files: (req.files || []).map((f) => `/uploads/${f.filename}`) });
+    try {
+      const files = [];
+      for (const f of req.files || []) files.push(await storage.saveImage(f.buffer, IMAGE_EXT[f.mimetype], f.mimetype));
+      res.json({ files });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Could not save the pictures. Please try again.' });
+    }
   });
 });
 
@@ -1070,10 +1151,18 @@ app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
   res.json(rest);
 });
 
-app.get('/api/admin/receipts/:file', requireAdmin, (req, res) => {
+app.get('/api/admin/receipts/:file', requireAdmin, async (req, res, next) => {
   const file = path.basename(req.params.file);
-  if (!store.orders.some((o) => o.manualPayment?.receipt === file)) return res.status(404).end();
-  res.sendFile(path.join(RECEIPT_DIR, file));
+  const order = store.orders.find((o) => o.manualPayment?.receipt === file);
+  if (!order) return res.status(404).end();
+  if (!order.manualPayment.receiptUrl) return res.sendFile(storage.receiptPath(file));
+  try {
+    const blob = await fetch(order.manualPayment.receiptUrl, { signal: AbortSignal.timeout(15000) });
+    if (!blob.ok) return res.status(404).end();
+    res.type(blob.headers.get('content-type') || 'image/jpeg').send(Buffer.from(await blob.arrayBuffer()));
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Admin: customers
@@ -1165,7 +1254,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
 });
 
 // Static files
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '30d' }));
+app.use('/uploads', express.static(storage.UPLOAD_DIR, { maxAge: '30d' }));
 // no-cache: the browser may keep a copy but must check with the server first,
 // so updated pages, scripts and styles show up right after the server is updated.
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
@@ -1176,7 +1265,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong' });
 });
 
-app.listen(PORT, () => {
+// On Vercel the app is imported and run for each request; on your own computer it listens on a port.
+module.exports = app;
+
+if (require.main === module) {
+  loadStore().then((loaded) => {
+    store = loaded;
+    app.listen(PORT, () => startupMessage());
+  });
+}
+
+function startupMessage() {
   console.log(`Store running:      http://localhost:${PORT}`);
   console.log(`Admin dashboard:    http://localhost:${PORT}/admin`);
   if (freshStore) {
@@ -1191,4 +1290,4 @@ app.listen(PORT, () => {
       ? `Easypaisa payments: ON (${EASYPAISA.env})`
       : 'Easypaisa payments: OFF (set EASYPAISA_STORE_ID, EASYPAISA_HASH_KEY, EASYPAISA_USERNAME, EASYPAISA_PASSWORD, EASYPAISA_ACCOUNT_NUM)'
   );
-});
+}
