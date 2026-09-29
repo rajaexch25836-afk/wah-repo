@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], orders: [], users: [], payment: null, userSearch: '', userFilter: 'all', editing: null, images: [], search: '', filter: 'all', orderSearch: '', orderFilter: 'all' };
+  const state = { settings: {}, content: null, applications: [], earnSearch: '', earnFilter: 'all', products: [], orders: [], users: [], payment: null, userSearch: '', userFilter: 'all', editing: null, images: [], search: '', filter: 'all', orderSearch: '', orderFilter: 'all' };
 
   document.querySelectorAll('[data-icon]').forEach((el) => (el.innerHTML = ICONS[el.dataset.icon] || ''));
 
@@ -57,8 +57,11 @@
     $('loginView').hidden = true;
     $('appView').hidden = false;
     state.accountSettings = data.accounts || {};
+    state.content = data.content;
     renderProducts();
     fillSettings();
+    renderContent();
+    loadApplications();
     loadOrders();
     loadUsers();
     loadPaymentSettings();
@@ -264,14 +267,19 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      ['orders', 'products', 'customers', 'payments', 'settings', 'security'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
+      ['orders', 'products', 'customers', 'payments', 'settings', 'pages', 'earn', 'security'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
       if (tab.dataset.tab === 'security') loadSecurity();
+      if (tab.dataset.tab === 'earn') loadApplications();
     })
   );
 
   // ---------- orders ----------
-  const STATUS_LABELS = { new: 'New', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled' };
-  const QUICK_STATUSES = ['shipped', 'delivered', 'returned', 'rejected'];
+  // Customers see these steps (with dates) under "My orders" and "Track your order"
+  const STATUS_LABELS = {
+    new: 'New', confirmed: 'Order confirmed', packing: 'Order packing', ready: 'Ready to deliver', picked: 'Order picked',
+    shipped: 'Shipped', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled',
+  };
+  const QUICK_STATUSES = ['confirmed', 'packing', 'ready', 'picked', 'shipped', 'delivered', 'returned', 'rejected'];
   // Orders in these states do not count towards sales
   const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
   const PAYMENT_LABELS = { unpaid: 'Unpaid', pending: 'Awaiting payment', paid: 'Paid', failed: 'Payment failed' };
@@ -301,7 +309,10 @@
     const statusCard = (status, label) => card(status, byStatus(status).length, label, money(sum(byStatus(status))));
     $('orderStats').innerHTML = [
       card('new', newCount, 'New orders'),
-      statusCard('confirmed', 'To ship'),
+      statusCard('confirmed', 'Confirmed'),
+      statusCard('packing', 'Packing'),
+      statusCard('ready', 'Ready to deliver'),
+      statusCard('picked', 'Picked'),
       statusCard('shipped', 'Shipped'),
       statusCard('delivered', 'Delivered'),
       statusCard('returned', 'Returned'),
@@ -771,6 +782,7 @@
       form.featured.checked = product.featured;
     }
     renderImages();
+    renderColorChips();
     $('editor').hidden = false;
     document.body.style.overflow = 'hidden';
   }
@@ -795,6 +807,29 @@
       )
       .join('');
   }
+
+  // Colour chips: tap to add/remove a colour from the comma list
+  const colorList = () => form.colors.value.split(',').map((c) => c.trim()).filter(Boolean);
+
+  function renderColorChips() {
+    const chosen = colorList().map((c) => c.toLowerCase());
+    $('colorChips').innerHTML = Object.entries(COLOR_SWATCHES)
+      .map(([name, bg]) => `<button type="button" class="color-chip${chosen.includes(name.toLowerCase()) ? ' on' : ''}" data-color="${escapeHtml(name)}"><span class="swatch" style="background:${bg}"></span>${escapeHtml(name)}</button>`)
+      .join('');
+  }
+
+  $('colorChips').addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-color]');
+    if (!chip) return;
+    const name = chip.dataset.color;
+    const list = colorList();
+    const i = list.findIndex((c) => c.toLowerCase() === name.toLowerCase());
+    if (i === -1) list.push(name);
+    else list.splice(i, 1);
+    form.colors.value = list.join(', ');
+    renderColorChips();
+  });
+  $('colorsInput').addEventListener('input', renderColorChips);
 
   $('imageList').addEventListener('click', (e) => {
     const cover = e.target.closest('[data-cover]');
@@ -1019,6 +1054,196 @@
     state.settings.slides[Number(input.closest('.slide-card').dataset.index)][input.dataset.slideField] = input.value;
     saveSettings('Slider text saved');
   });
+
+  // ---------- pages: About us, policies, Earn with us, size guide, location ----------
+  const contentForm = $('contentForm');
+  const PAGE_INFO = {
+    about: 'Shown from “About us” in the footer.',
+    shipping: 'Delivery areas, time and charges.',
+    returns: 'Exchange and refund rules.',
+    terms: 'Terms & conditions of buying from your store.',
+    earn: 'Shown above the “Earn with us” form (name, city, email, mobile). Filled forms appear in the “Earn with us” tab.',
+  };
+  const TEXT_HELP = 'New line = new line. Empty line = new paragraph. Start lines with • or - for a list.';
+
+  function imageBlock(path, src) {
+    return `
+      <div class="page-image" data-image="${path}">
+        ${src ? `<img src="${escapeHtml(src)}" alt="">` : '<div class="page-image-empty">No picture</div>'}
+        <div class="btn-row">
+          <label class="btn btn-sm btn-ghost">${src ? 'Change picture' : '+ Add picture'}<input type="file" accept="image/*" hidden data-image-input="${path}"></label>
+          ${src ? `<button type="button" class="btn btn-sm btn-ghost" data-image-remove="${path}">Remove</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function renderContent() {
+    const c = state.content;
+    if (!c) return;
+    const pagePanel = (key) => {
+      const p = c.pages[key];
+      return `
+        <div class="panel">
+          <h2>${escapeHtml(p.title)}</h2>
+          <p class="hint">${PAGE_INFO[key]}</p>
+          <label>Title <input data-content="pages.${key}.title" maxlength="80" value="${escapeHtml(p.title)}"></label>
+          ${imageBlock(`pages.${key}.image`, p.image)}
+          <label>Text <small>${TEXT_HELP}</small><textarea data-content="pages.${key}.text" rows="8" maxlength="8000">${escapeHtml(p.text)}</textarea></label>
+        </div>`;
+    };
+    contentForm.innerHTML = `
+      <div class="panel">
+        <h2>Size guide</h2>
+        <p class="hint">Customers see a “Size guide” link next to the sizes of every product. Write rows like <code>Size | Chest | Length</code> to show a table, or add a picture of your size chart.</p>
+        ${imageBlock('sizeGuide.image', c.sizeGuide.image)}
+        <label>Text <textarea data-content="sizeGuide.text" rows="9" maxlength="4000">${escapeHtml(c.sizeGuide.text)}</textarea></label>
+      </div>
+      <div class="panel">
+        <h2>Shop location</h2>
+        <p class="hint">Shown in the footer as “Visit our shop”. Leave the address empty to hide it.</p>
+        <label>Shop address <textarea data-content="location.address" rows="3" maxlength="300" placeholder="Shop #12, Main Market, Gulberg, Lahore">${escapeHtml(c.location.address)}</textarea></label>
+        <label>Google Maps link <small>Optional. In Google Maps open your shop → Share → Copy link</small><input data-content="location.mapLink" type="url" placeholder="https://maps.app.goo.gl/…" value="${escapeHtml(c.location.mapLink)}"></label>
+        <label class="switch"><input type="checkbox" data-content="location.showMap"${c.location.showMap ? ' checked' : ''}><span></span> Show a small map in the footer</label>
+      </div>
+      ${['about', 'shipping', 'returns', 'terms', 'earn'].map(pagePanel).join('')}
+      <div class="save-bar"><button class="btn btn-accent" type="submit">Save pages</button></div>`;
+  }
+
+  // Copies what is typed into state.content
+  function readContent() {
+    contentForm.querySelectorAll('[data-content]').forEach((el) => {
+      const keys = el.dataset.content.split('.');
+      const last = keys.pop();
+      const target = keys.reduce((o, k) => o[k], state.content);
+      target[last] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+  }
+
+  function setContentPath(path, value) {
+    const keys = path.split('.');
+    const last = keys.pop();
+    keys.reduce((o, k) => o[k], state.content)[last] = value;
+  }
+
+  async function saveContent(message = 'Pages saved') {
+    try {
+      state.content = await api('/api/admin/content', { method: 'PUT', body: state.content });
+      renderContent();
+      toast(message);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  contentForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    readContent();
+    saveContent();
+  });
+
+  contentForm.addEventListener('change', async (e) => {
+    const input = e.target.closest('[data-image-input]');
+    if (!input || !input.files.length) return;
+    readContent();
+    toast('Uploading…');
+    try {
+      const [url] = await uploadImages([input.files[0]]);
+      setContentPath(input.dataset.imageInput, url);
+      await saveContent('Picture saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  contentForm.addEventListener('click', (e) => {
+    const remove = e.target.closest('[data-image-remove]');
+    if (!remove || !confirm('Remove this picture?')) return;
+    readContent();
+    setContentPath(remove.dataset.imageRemove, '');
+    saveContent('Picture removed');
+  });
+
+  // ---------- Earn with us forms ----------
+  const EARN_LABELS = { new: 'New', contacted: 'Contacted', approved: 'Approved', rejected: 'Rejected' };
+
+  async function loadApplications() {
+    try {
+      state.applications = await api('/api/admin/applications');
+      renderApplications();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderApplications() {
+    const all = state.applications;
+    const count = (st) => all.filter((a) => a.status === st).length;
+    $('newEarnBadge').textContent = count('new');
+    $('newEarnBadge').hidden = !count('new');
+    $('earnStats').innerHTML = [[all.length, 'Total forms'], [count('new'), 'New'], [count('contacted'), 'Contacted'], [count('approved'), 'Approved']]
+      .map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`)
+      .join('');
+    const q = state.earnSearch.toLowerCase();
+    const list = all.filter((a) => (state.earnFilter === 'all' || a.status === state.earnFilter) && (!q || `${a.name} ${a.city} ${a.email} ${a.phone}`.toLowerCase().includes(q)));
+    $('earnList').innerHTML = list.length
+      ? list
+          .map((a) => {
+            const wa = a.phone.replace(/\D/g, '').replace(/^0/, '92');
+            return `
+        <div class="urow earn-row" data-id="${escapeHtml(a.id)}">
+          <div class="avatar">${escapeHtml(a.name.slice(0, 2).toUpperCase())}</div>
+          <div>
+            <div class="pname">${escapeHtml(a.name)} <span class="pmeta">· ${escapeHtml(a.city)}</span>${a.userId ? '<span class="badge-user">Registered</span>' : ''}</div>
+            <div class="pmeta"><a href="tel:${escapeHtml(a.phone)}">${escapeHtml(a.phone)}</a> · <a href="https://wa.me/${escapeHtml(wa)}" target="_blank" rel="noopener">WhatsApp</a> · <a href="mailto:${escapeHtml(a.email)}">${escapeHtml(a.email)}</a></div>
+            ${a.message ? `<div class="order-notes">${escapeHtml(a.message)}</div>` : ''}
+            <div class="pmeta">${new Date(a.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+          </div>
+          <select class="status-select" data-earn-status aria-label="Status">
+            ${Object.entries(EARN_LABELS).map(([v, l]) => `<option value="${v}"${a.status === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <div class="pactions"><button class="btn btn-sm btn-ghost" data-earn-delete>Delete</button></div>
+        </div>`;
+          })
+          .join('')
+      : `<div class="empty">${all.length ? 'No forms match.' : 'No forms yet. They appear here when someone fills “Earn with us”.'}</div>`;
+  }
+
+  $('earnList').addEventListener('change', async (e) => {
+    if (!e.target.matches('[data-earn-status]')) return;
+    const id = e.target.closest('.earn-row').dataset.id;
+    try {
+      const updated = await api(`/api/admin/applications/${id}`, { method: 'PATCH', body: { status: e.target.value } });
+      Object.assign(state.applications.find((a) => a.id === id), updated);
+      renderApplications();
+      toast('Updated');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  $('earnList').addEventListener('click', async (e) => {
+    if (!e.target.closest('[data-earn-delete]')) return;
+    const id = e.target.closest('.earn-row').dataset.id;
+    if (!confirm('Delete this form?')) return;
+    try {
+      await api(`/api/admin/applications/${id}`, { method: 'DELETE' });
+      state.applications = state.applications.filter((a) => a.id !== id);
+      renderApplications();
+      toast('Deleted');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  $('earnSearch').addEventListener('input', (e) => {
+    state.earnSearch = e.target.value.trim();
+    renderApplications();
+  });
+  $('earnFilter').addEventListener('change', (e) => {
+    state.earnFilter = e.target.value;
+    renderApplications();
+  });
+  $('refreshEarnBtn').addEventListener('click', loadApplications);
 
   $('passwordForm').addEventListener('submit', async (e) => {
     e.preventDefault();

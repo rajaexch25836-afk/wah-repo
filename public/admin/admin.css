@@ -149,6 +149,10 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
 .quick-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); font-weight: 600; }
 .qs { height: 30px; padding: 0 12px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); font: inherit; font-weight: 700; cursor: pointer; color: var(--muted); }
 .qs:hover { border-color: var(--ink); color: var(--ink); }
+.qs-confirmed.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.qs-packing.on { background: #8e6bd8; border-color: #8e6bd8; color: #fff; }
+.qs-ready.on { background: #d97a2b; border-color: #d97a2b; color: #fff; }
+.qs-picked.on { background: #1f9aa8; border-color: #1f9aa8; color: #fff; }
 .qs-shipped.on { background: #5b8def; border-color: #5b8def; color: #fff; }
 .qs-delivered.on { background: var(--green); border-color: var(--green); color: #fff; }
 .qs-returned.on { background: #e9a23b; border-color: #e9a23b; color: #fff; }
@@ -247,3 +251,19 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
   .order-head { flex-wrap: wrap; }
   .order-body { grid-template-columns: 1fr; }
 }
+
+/* Colour chips in the product editor */
+.color-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.color-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.color-chip.on { border-color: var(--ink); background: var(--ink); color: #fff; }
+.swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); flex-shrink: 0; }
+
+/* Pages tab */
+.page-image { display: grid; gap: 8px; }
+.page-image img { width: 100%; max-height: 220px; object-fit: cover; border-radius: 10px; background: var(--bg); }
+.page-image-empty { height: 80px; border: 2px dashed var(--line); border-radius: 10px; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+.page-image .btn { cursor: pointer; }
+#contentForm code { background: var(--bg); padding: 1px 6px; border-radius: 4px; }
+#contentForm textarea { font-family: inherit; line-height: 1.5; }
+.earn-row .status-select { width: auto; }
+

@@ -3,17 +3,21 @@
 Kapron (clothes) ki online shop, apne admin dashboard ke saath.
 
 - **Customer site** (`/`) — mobile aur desktop dono pe sahi dikhti hai. Categories, search, sort, sale/sold-out badges, product pictures, size/colour select, bag (cart) aur **checkout**: customer first name, last name, contact number, email (optional), poora address, city aur notes bharta hai, phir **Cash on Delivery**, **Bank / Easypaisa / JazzCash transfer**, **Easypaisa** ya **Pay online (Safepay)** chunta hai.
-- **Customer account** — customer register / login kar sakta hai (email ya mobile number se). "My account" me apni orders ki halat, apni details aur password change. Login hone pe checkout me naam, phone aur address khud bhar jaata hai.
+- **Customer account** — customer register / login kar sakta hai (email ya mobile number se). "My account" me har order ki step-by-step halat (tareekh ke saath), apni details aur password change, aur "Earn with us" ka button.
+- **Footer** — About us, Shipping policy, Return & exchange policy, Terms & conditions, **Earn with us** (form: naam, city, email, mobile — dashboard me aata hai aur customer WhatsApp pe bhi bhej sakta hai), **Track your order** (order number + mobile number se, bina account ke) aur **Visit our shop** (dukaan ka address, chhota map aur Google Maps link).
+- **Size guide** — product pe size ke saath "Size guide" link; table ya picture dikhata hai. Login hone pe checkout me naam, phone aur address khud bhar jaata hai.
 - **Dashboard** (`/admin`) — password se login. Yahan se aap:
-  - **Orders** tab me har order customer ki poori detail ke saath dekh sakte hain (naam, phone, WhatsApp, address, items, total, payment), status badal sakte hain (New → Confirmed → Shipped → Delivered / Returned / Rejected / Cancelled). Har order pe **Shipped, Delivered, Returned, Rejected** ke ek-click buttons hain. Upar har status ki ginti aur raqam, **Net sales** (Returned, Rejected aur Cancelled ke baghair) aur **Payment received** dikhte hain; kisi bhi card pe click karne se wohi orders filter ho jaate hain aur COD order ko "Mark as paid" kar sakte hain. Easypaisa order pe **Check payment** dabane se Easypaisa se payment ki taaza halat aa jaati hai
+  - **Orders** tab me har order customer ki poori detail ke saath dekh sakte hain (naam, phone, WhatsApp, address, items, total, payment), status badal sakte hain (New → Order confirmed → Order packing → Ready to deliver → Order picked → Shipped → Delivered / Returned / Rejected / Cancelled). Har order pe in sab ke ek-click "Mark as" buttons hain, aur customer ko har step tareekh ke saath nazar aata hai. Upar har status ki ginti aur raqam, **Net sales** (Returned, Rejected aur Cancelled ke baghair) aur **Payment received** dikhte hain; kisi bhi card pe click karne se wohi orders filter ho jaate hain aur COD order ko "Mark as paid" kar sakte hain. Easypaisa order pe **Check payment** dabane se Easypaisa se payment ki taaza halat aa jaati hai
   - **Customers** tab: saare registered customers, unke orders aur kharcha; customer ki details edit, naya password set, **Block / Unblock** aur **Delete**. Yahin se "naye customers register kar saken" aur "order ke liye login zaroori" on/off hota hai
   - **Payments** tab: Cash on delivery on/off, aur **Bank / Easypaisa / JazzCash accounts** add / edit / hide / remove (bank ka naam, account title, account number, IBAN, customer ke liye note)
   - Product add / edit / delete kar sakte hain
-  - Naam (rename), price, sale price, description, sizes, colours change kar sakte hain
+  - Naam (rename), price, sale price, description, sizes, colours change kar sakte hain. Colours ke liye 35 tayyar rang (chip daba kar lagayein) ya apne naam likhein; store pe rang ka chhota gola dikhta hai
   - Pictures upload / remove / "Make main" kar sakte hain
   - Ek click me **On sale**, **Sold out**, **Trending** laga/hata sakte hain
   - **Store & Social** tab me **Home page slider**: shape chunein — **Landscape** (chaudi banner, best size **1920 × 820 px**; phone pe beech ka hissa dikhta hai) ya **Portrait** (Instagram post jaisi, best size **1080 × 1350 px**; computer pe 3 saath, phone pe ek ek). Har picture ke neeche uska size likha aata hai aur agar shape ya size theek na ho to laal warning. 6 tak pictures upload karein, har picture pe heading aur text (optional), aage peechay karein ya hatayein. Yeh store ke upar slide hoti hain (mobile pe ungli se swipe). Tabdeeli foran save hoti hai
   - **Store & Social** tab me store ka naam, heading, announcement bar, categories aur social links (WhatsApp, Instagram, Facebook, TikTok, YouTube, Email, Phone) set kar sakte hain — jo field khali chhorenge woh website pe nahi dikhega
+  - **Pages** tab: Size guide (text/table aur picture), dukaan ki location, aur About us, Shipping, Return, Terms, Earn with us — har page ka title, text aur picture
+  - **Earn with us** tab: bhare hue forms (call, WhatsApp, email links), status New / Contacted / Approved / Rejected, delete
   - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein
 
 ## Chalane ka tareeqa
@@ -146,6 +150,7 @@ GitHub Pages pe dashboard nahi chalega kyun ke woh sirf static files dikhata hai
 | Path | Kaam |
 |------|------|
 | `server.js` | Backend: API, login, picture upload |
+| `lib/content.js` | Pages, size guide aur location ka shuru ka text |
 | `lib/storage.js` | Data aur pictures kahan save hon (disk, ya Vercel pe Redis + Blob) |
 | `data/seed.json` | Shuru ka sample data |
 | `public/index.html`, `public/css`, `public/js/app.js` | Customer website |

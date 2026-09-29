@@ -58,6 +58,8 @@
         <button class="tab" data-tab="customers">Customers</button>
         <button class="tab" data-tab="payments">Payments</button>
         <button class="tab" data-tab="settings">Store &amp; Social</button>
+        <button class="tab" data-tab="pages">Pages</button>
+        <button class="tab" data-tab="earn">Earn with us <span class="tab-badge" id="newEarnBadge" hidden></span></button>
         <button class="tab" data-tab="security">Security</button>
       </nav>
       <div class="topbar-actions">
@@ -75,7 +77,10 @@
           <select id="orderFilter">
             <option value="all">All orders</option>
             <option value="new">New</option>
-            <option value="confirmed">Confirmed</option>
+            <option value="confirmed">Order confirmed</option>
+            <option value="packing">Order packing</option>
+            <option value="ready">Ready to deliver</option>
+            <option value="picked">Order picked</option>
             <option value="shipped">Shipped</option>
             <option value="delivered">Delivered</option>
             <option value="returned">Returned</option>
@@ -201,6 +206,28 @@
         </form>
       </section>
 
+      <!-- Pages: About us, policies, Earn with us, size guide, location -->
+      <section id="tab-pages" hidden>
+        <form id="contentForm" class="settings"></form>
+      </section>
+
+      <!-- Earn with us forms -->
+      <section id="tab-earn" hidden>
+        <div class="stats" id="earnStats"></div>
+        <div class="toolbar">
+          <input type="search" id="earnSearch" placeholder="Search by name, city, email or mobile…">
+          <select id="earnFilter">
+            <option value="all">All forms</option>
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshEarnBtn">Refresh</button>
+        </div>
+        <div class="product-list" id="earnList"></div>
+      </section>
+
       <!-- Security -->
       <section id="tab-security" hidden>
         <div class="security">
@@ -272,7 +299,10 @@
         </div>
         <label>Description <textarea name="description" rows="4" maxlength="3000"></textarea></label>
         <label>Sizes <small>Comma separated, e.g. S, M, L, XL</small><input name="sizes"></label>
-        <label>Colours <small>Comma separated, e.g. Black, White</small><input name="colors"></label>
+        <div class="field-block">
+          <label>Colours <small>Tap colours below, or type your own names separated by commas</small><input name="colors" id="colorsInput"></label>
+          <div class="color-chips" id="colorChips"></div>
+        </div>
         <div class="switches">
           <label class="switch"><input type="checkbox" name="onSale"><span></span> On sale</label>
           <label class="switch"><input type="checkbox" name="soldOut"><span></span> Sold out</label>
