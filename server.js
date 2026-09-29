@@ -92,6 +92,9 @@ function withDefaults(data) {
   data.collections ||= []; // e.g. "Eid Collection", shown as rows on the home page
   data.reviews ||= []; // customer reviews, shown after the admin approves them
   data.staff ||= []; // staff logins with limited permissions
+  // Loyalty points: earn 1 point per `earnPer` spent (after delivery), 1 point = `pointValue` off
+  data.loyalty = { enabled: false, earnPer: 100, pointValue: 1, maxPercent: 50, ...data.loyalty };
+  data.passwordRequests ||= []; // "Forgot password" requests for the admin
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -186,8 +189,46 @@ const activeManualAccounts = () =>
 // ---------- Customer accounts ----------
 
 function publicUser(u) {
-  const { passwordHash, tokenVersion, ...rest } = u;
-  return rest;
+  const { passwordHash, tokenVersion, pointsLog = [], ...rest } = u;
+  return { ...rest, wishlist: u.wishlist || [], addresses: u.addresses || [], points: u.points || 0, pointsLog: pointsLog.slice(0, 20) };
+}
+
+// ---------- Loyalty points ----------
+
+function addPoints(user, change, reason) {
+  if (!user || !change) return;
+  user.points = Math.max(0, (user.points || 0) + change);
+  user.pointsLog = [{ change, reason, at: new Date().toISOString() }, ...(user.pointsLog || [])].slice(0, 100);
+}
+
+// How much of an order can be paid with points: capped by the points and by maxPercent of the items.
+function pointsDiscount(user, subtotal) {
+  const l = store.loyalty;
+  if (!l.enabled || !user?.points || !(l.pointValue > 0)) return { points: 0, discount: 0 };
+  const maxDiscount = Math.floor((subtotal * l.maxPercent) / 100);
+  const points = Math.min(user.points, Math.floor(maxDiscount / l.pointValue));
+  return { points, discount: Math.round(points * l.pointValue * 100) / 100 };
+}
+
+// Points follow the order: earned when delivered, taken back if it is returned later,
+// and points spent on an order come back if it is cancelled, rejected or returned.
+function applyLoyalty(order) {
+  const user = order.userId && store.users.find((u) => u.id === order.userId);
+  if (!user) return;
+  if (order.status === 'delivered' && !order.pointsEarned && store.loyalty.enabled && store.loyalty.earnPer > 0) {
+    order.pointsEarned = Math.floor((order.subtotal ?? order.total) / store.loyalty.earnPer);
+    addPoints(user, order.pointsEarned, `Order #${order.number} delivered`);
+  }
+  if (LOST_STATUSES.includes(order.status)) {
+    if (order.pointsEarned) {
+      addPoints(user, -order.pointsEarned, `Order #${order.number} ${order.status}`);
+      order.pointsEarned = 0;
+    }
+    if (order.pointsUsed && !order.pointsRefunded) {
+      addPoints(user, order.pointsUsed, `Points back from order #${order.number}`);
+      order.pointsRefunded = true;
+    }
+  }
 }
 
 // Checks name/email/phone/address fields for a customer profile. Returns [fields, error].
@@ -268,6 +309,7 @@ function setOrderStatus(order, status) {
   if (order.status === status) return;
   order.status = status;
   order.statusHistory = [...(order.statusHistory || []), { status, at: new Date().toISOString() }];
+  applyLoyalty(order);
 }
 // Orders in these states do not count towards sales
 const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
@@ -338,6 +380,9 @@ function publicOrder(o) {
     items: o.items,
     subtotal: o.subtotal ?? o.total,
     deliveryFee: o.deliveryFee || 0,
+    pointsUsed: o.pointsUsed || 0,
+    pointsDiscount: o.pointsDiscount || 0,
+    pointsEarned: o.pointsEarned || 0,
     total: o.total,
     paymentMethod: o.paymentMethod,
     paymentStatus: o.paymentStatus,
@@ -755,6 +800,7 @@ app.get('/api/store', (req, res) => {
     accounts: store.accountSettings,
     content: store.content,
     delivery: store.deliverySettings,
+    loyalty: store.loyalty,
     collections: store.collections,
     reviews: store.reviews.filter((r) => r.status === 'approved').map(publicReview),
   });
@@ -870,6 +916,61 @@ app.post('/api/account/password', requireUser, (req, res) => {
   res.json({ ok: true });
 });
 
+// Wishlist (saved products) — kept on the account so it shows on every device
+app.put('/api/account/wishlist', requireUser, (req, res) => {
+  const ids = new Set(store.products.map((p) => p.id));
+  req.user.wishlist = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).filter((id) => ids.has(id)))].slice(0, 200);
+  save();
+  res.json(req.user.wishlist);
+});
+
+// Saved delivery addresses (Home, Office…)
+app.put('/api/account/addresses', requireUser, (req, res) => {
+  const list = (Array.isArray(req.body.addresses) ? req.body.addresses : []).slice(0, 5).map((a) => ({
+    id: /^[a-f0-9]{8}$/.test(a?.id) ? a.id : crypto.randomBytes(4).toString('hex'),
+    label: str(a?.label, 30) || 'Address',
+    address: str(a?.address, 300),
+    city: str(a?.city, 60),
+  }));
+  if (list.some((a) => a.address.length < 10 || !a.city)) return res.status(400).json({ error: 'Every address needs the full address and the city' });
+  req.user.addresses = list;
+  save();
+  res.json(list);
+});
+
+// The customer cancels their own order while it is still "New"
+app.post('/api/account/orders/:id/cancel', requireUser, async (req, res) => {
+  const order = store.orders.find((o) => o.id === req.params.id && o.userId === req.user.id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  if (order.status !== 'new') return res.status(400).json({ error: 'This order is already being prepared. Please contact us on WhatsApp to change it.' });
+  if (order.paymentStatus === 'paid') return res.status(400).json({ error: 'This order is already paid. Please contact us on WhatsApp to cancel it.' });
+  setOrderStatus(order, 'cancelled');
+  order.cancelledBy = 'customer';
+  if (order.paymentStatus === 'pending') order.paymentStatus = 'failed';
+  save();
+  await alertOwner(`❌ Order #${order.number} was cancelled by the customer\n${order.customer.firstName} ${order.customer.lastName} · ${order.customer.phone}`);
+  res.json(publicOrder(order));
+});
+
+// "Forgot password": the owner sees the request (dashboard + WhatsApp) and sets a new password.
+// The answer is the same whether or not the account exists, so it cannot be used to find accounts.
+const recentForgot = new Map();
+app.post('/api/account/forgot', async (req, res) => {
+  const now = Date.now();
+  const times = (recentForgot.get(req.ip) || []).filter((t) => t > now - 3600 * 1000);
+  if (times.length >= 3) return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+  recentForgot.set(req.ip, [...times, now]);
+  const login = str(req.body.login, 120).toLowerCase();
+  const user = login && store.users.find((u) => u.email === login || (phoneKey(login).length === 10 && phoneKey(u.phone) === phoneKey(login)));
+  if (user && !store.passwordRequests.some((r) => r.userId === user.id && r.status === 'new')) {
+    store.passwordRequests.unshift({ id: crypto.randomBytes(6).toString('hex'), userId: user.id, status: 'new', createdAt: new Date().toISOString() });
+    store.passwordRequests.length = Math.min(store.passwordRequests.length, 500);
+    save();
+    await alertOwner(`🔑 Password reset request\n${user.firstName} ${user.lastName} · ${user.phone}\nSet a new password in Dashboard > Customers.`);
+  }
+  res.json({ ok: true });
+});
+
 // Orders
 app.post('/api/orders', async (req, res, next) => {
   try {
@@ -898,6 +999,7 @@ app.post('/api/orders', async (req, res, next) => {
 
     const subtotal = Math.round(items.reduce((n, i) => n + i.price * i.qty, 0) * 100) / 100;
     const deliveryFee = deliveryFeeFor(customer.city, subtotal);
+    const redeem = req.body.usePoints && user ? pointsDiscount(user, subtotal) : { points: 0, discount: 0 };
     const order = {
       id: crypto.randomBytes(8).toString('hex'),
       number: store.nextOrderNumber,
@@ -907,7 +1009,9 @@ app.post('/api/orders', async (req, res, next) => {
       items,
       subtotal,
       deliveryFee,
-      total: Math.round((subtotal + deliveryFee) * 100) / 100,
+      pointsUsed: redeem.points,
+      pointsDiscount: redeem.discount,
+      total: Math.round((subtotal + deliveryFee - redeem.discount) * 100) / 100,
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'unpaid' : 'pending',
       status: 'new',
@@ -933,6 +1037,7 @@ app.post('/api/orders', async (req, res, next) => {
       order.easypaisa = { orderRef: `WAH${order.number}${order.id.slice(0, 6).toUpperCase()}` };
     }
 
+    if (redeem.points) addPoints(user, -redeem.points, `Used on order #${order.number}`);
     store.nextOrderNumber += 1;
     store.orders.unshift(order);
     save();
@@ -1569,6 +1674,36 @@ app.get('/api/admin/backup', requireAdmin, async (req, res, next) => {
   }
 });
 
+// Admin: loyalty points settings
+app.put('/api/admin/loyalty', allow('customers'), (req, res) => {
+  store.loyalty = {
+    enabled: Boolean(req.body.enabled),
+    earnPer: Math.max(1, num(req.body.earnPer) ?? 100),
+    pointValue: num(req.body.pointValue) ?? 1,
+    maxPercent: Math.min(100, num(req.body.maxPercent) ?? 50),
+  };
+  save();
+  res.json(store.loyalty);
+});
+
+// Admin: "Forgot password" requests
+app.get('/api/admin/password-requests', allow('customers'), (req, res) => {
+  res.json(
+    store.passwordRequests.map((r) => {
+      const u = store.users.find((x) => x.id === r.userId);
+      return { ...r, name: u ? `${u.firstName} ${u.lastName}` : 'Deleted customer', phone: u?.phone || '', email: u?.email || '' };
+    })
+  );
+});
+
+app.patch('/api/admin/password-requests/:id', allow('customers'), (req, res) => {
+  const r = store.passwordRequests.find((x) => x.id === req.params.id);
+  if (!r) return res.status(404).json({ error: 'Request not found' });
+  r.status = req.body.status === 'done' ? 'done' : 'new';
+  save();
+  res.json(r);
+});
+
 // Admin: customers
 app.get('/api/admin/users', allow('customers'), (req, res) => {
   res.json(
@@ -1590,6 +1725,10 @@ app.put('/api/admin/users/:id', allow('customers'), (req, res) => {
   // A new password or blocking logs the customer out of every device
   if (newPassword || (blocked && !user.blocked)) user.tokenVersion += 1;
   if (newPassword) user.passwordHash = hashPassword(newPassword);
+  // Setting a new password also closes their "forgot password" request
+  if (newPassword) store.passwordRequests.filter((r) => r.userId === user.id).forEach((r) => (r.status = 'done'));
+  const points = num(req.body.points);
+  if (points !== null && points !== (user.points || 0)) addPoints(user, Math.round(points) - (user.points || 0), 'Changed by the store');
   Object.assign(user, profile, { blocked, updatedAt: new Date().toISOString() });
   save();
   res.json(publicUser(user));

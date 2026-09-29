@@ -159,6 +159,23 @@
             <label class="switch"><input type="checkbox" name="requireLogin"><span></span> Customers must log in to place an order</label>
           </div>
         </div>
+        <div class="panel" id="pwRequestsPanel" hidden>
+          <h2>🔑 Forgot password requests</h2>
+          <p class="hint">Customers who asked for a new password. Click <b>Set password</b>, type a new one, save, then send it to them on WhatsApp.</p>
+          <div class="product-list" id="pwRequests"></div>
+        </div>
+        <form class="panel" id="loyaltyForm" novalidate>
+          <h2>⭐ Loyalty points</h2>
+          <p class="hint">Logged-in customers earn points when an order is <b>Delivered</b> and can use them at checkout. Points come back if an order is cancelled or returned.</p>
+          <label class="switch"><input type="checkbox" name="enabled"><span></span> Loyalty points on</label>
+          <div class="row row-3">
+            <label>Spend (Rs) for 1 point <input name="earnPer" type="number" min="1" step="1"></label>
+            <label>1 point is worth (Rs) <input name="pointValue" type="number" min="0" step="0.5"></label>
+            <label>Max % of an order paid with points <input name="maxPercent" type="number" min="0" max="100" step="1"></label>
+          </div>
+          <p class="pmeta" id="loyaltyExample"></p>
+          <div class="btn-row"><button class="btn btn-accent" type="submit">Save loyalty points</button></div>
+        </form>
         <div class="stats" id="userStats"></div>
         <div class="toolbar">
           <input type="search" id="userSearch" placeholder="Search by name, email, mobile or city…">
@@ -352,6 +369,7 @@
         <label>Mobile number <input name="phone" type="tel" maxlength="20" required></label>
         <label>Address <textarea name="address" rows="2" maxlength="300"></textarea></label>
         <label>City <input name="city" maxlength="60"></label>
+        <label>Loyalty points <small>Change to add or remove points</small><input name="points" type="number" min="0" step="1"></label>
         <label>New password <small>Leave empty to keep the current password. Setting one logs the customer out.</small><input name="newPassword" type="password" minlength="6" autocomplete="new-password"></label>
         <label class="switch"><input type="checkbox" name="blocked"><span></span> Blocked (cannot log in)</label>
         <p class="pmeta" id="userMeta"></p>
