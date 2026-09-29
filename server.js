@@ -88,6 +88,10 @@ function withDefaults(data) {
   data.applications ||= []; // "Earn with us" form
   // WhatsApp alerts to the owner (CallMeBot)
   data.notifySettings = { phone: '', apiKey: '', onOrder: true, onEarn: true, ...data.notifySettings };
+  data.deliverySettings = { fee: 0, freeAbove: 0, cityFees: [], ...data.deliverySettings };
+  data.collections ||= []; // e.g. "Eid Collection", shown as rows on the home page
+  data.reviews ||= []; // customer reviews, shown after the admin approves them
+  data.staff ||= []; // staff logins with limited permissions
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -309,6 +313,14 @@ function buildOrderItems(lines) {
   return [items, null];
 }
 
+// Delivery charge: free above a set amount, else the city's own charge, else the normal charge.
+function deliveryFeeFor(city, subtotal) {
+  const d = store.deliverySettings;
+  if (d.freeAbove > 0 && subtotal >= d.freeAbove) return 0;
+  const match = d.cityFees.find((c) => c.city.toLowerCase() === String(city || '').trim().toLowerCase());
+  return match ? match.fee : d.fee;
+}
+
 const paymentMethods = () => ({
   cod: store.paymentSettings.cod,
   manual: activeManualAccounts().length > 0,
@@ -324,6 +336,8 @@ function publicOrder(o) {
     createdAt: o.createdAt,
     firstName: o.customer.firstName,
     items: o.items,
+    subtotal: o.subtotal ?? o.total,
+    deliveryFee: o.deliveryFee || 0,
     total: o.total,
     paymentMethod: o.paymentMethod,
     paymentStatus: o.paymentStatus,
@@ -552,21 +566,46 @@ function checkSecondFactor(code) {
 const sign = (payload) => crypto.createHmac('sha256', store.secret).update(payload).digest('base64url');
 const adminSessionVersion = () => String(store.admin.sessionVersion || 1);
 
-function startAdminSession(res) {
-  const payload = `admin.${Date.now() + SESSION_TTL_MS}.${adminSessionVersion()}`;
+// Staff cookies are "staff.<id>.expiry.version.signature"; the version is the staff member's own,
+// so changing their password or switching them off logs them out.
+function startAdminSession(res, staff = null) {
+  const payload = staff
+    ? `staff.${staff.id}.${Date.now() + SESSION_TTL_MS}.${staff.tokenVersion}`
+    : `admin.${Date.now() + SESSION_TTL_MS}.${adminSessionVersion()}`;
   res.setHeader(
     'Set-Cookie',
     `admin_session=${payload}.${sign(payload)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${secureFlag()}`
   );
 }
 
-function validAdminSession(req) {
-  const [kind, exp, version, sig] = (parseCookies(req.headers.cookie).admin_session || '').split('.');
-  return (
-    kind === 'admin' && Boolean(sig) && safeEqual(sign(`${kind}.${exp}.${version}`), sig) &&
-    Number(exp) > Date.now() && version === adminSessionVersion()
-  );
+// Who is logged in to the dashboard: { role: 'owner' } or { role: 'staff', staff }, or null.
+function adminIdentity(req) {
+  const parts = (parseCookies(req.headers.cookie).admin_session || '').split('.');
+  const sig = parts.pop();
+  if (!sig || !safeEqual(sign(parts.join('.')), sig)) return null;
+  if (parts[0] === 'admin' && parts.length === 3) {
+    const [, exp, version] = parts;
+    return Number(exp) > Date.now() && version === adminSessionVersion() ? { role: 'owner' } : null;
+  }
+  if (parts[0] === 'staff' && parts.length === 4) {
+    const [, id, exp, version] = parts;
+    const staff = store.staff.find((m) => m.id === id);
+    return staff && staff.active && Number(exp) > Date.now() && String(staff.tokenVersion) === version ? { role: 'staff', staff } : null;
+  }
+  return null;
 }
+
+// What staff can be allowed to do. The owner can do everything, and alone manages staff,
+// security, WhatsApp alerts and backups.
+const STAFF_PERMISSIONS = {
+  orders: 'Orders (see, change status, print slips)',
+  products: 'Products & collections (add, edit, prices)',
+  customers: 'Customers',
+  payments: 'Payments & delivery charges',
+  content: 'Store settings, pages & popup',
+  reviews: 'Reviews',
+  earn: 'Earn with us forms',
+};
 
 // Password was right, waiting for the Google Authenticator code (5 minutes).
 // Tied to the password, so it stops working if the password changes.
@@ -588,19 +627,31 @@ function parseCookies(header = '') {
 
 // Logged in (enough to set a new password)
 function requireAdminSession(req, res, next) {
-  if (!validAdminSession(req)) return res.status(401).json({ error: 'Not logged in' });
+  req.admin = adminIdentity(req);
+  if (!req.admin) return res.status(401).json({ error: 'Not logged in' });
   next();
 }
 
-// Logged in and has a strong password
+// The owner, logged in with a strong password
 function requireAdmin(req, res, next) {
   requireAdminSession(req, res, () => {
+    if (req.admin.role !== 'owner') return res.status(403).json({ error: 'Only the store owner can do this' });
     if (store.admin.mustChangePassword) {
       return res.status(403).json({ error: 'Please set a new strong password first', mustChangePassword: true });
     }
     next();
   });
 }
+
+// The owner, or staff with one of these permissions
+const allow = (...perms) => (req, res, next) =>
+  requireAdminSession(req, res, () => {
+    if (req.admin.role === 'owner') return requireAdmin(req, res, next);
+    if (!perms.some((p) => req.admin.staff.permissions.includes(p))) {
+      return res.status(403).json({ error: 'You do not have permission for this' });
+    }
+    next();
+  });
 
 // ---------- App ----------
 
@@ -639,7 +690,7 @@ app.use('/api', (req, res, next) => {
   if (missing.length) {
     return res.status(503).json({ error: `Store setup is not finished. Connect in Vercel > Storage: ${missing.join(', ')}` });
   }
-  const readOnly = req.method === 'GET' && req.path === '/store';
+  const readOnly = req.method === 'GET' && ['/store', '/admin/backup'].includes(req.path);
   let finish;
   const done = new Promise((resolve) => (finish = resolve));
   const turn = queue;
@@ -703,7 +754,48 @@ app.get('/api/store', (req, res) => {
     payments: { ...paymentMethods(), manualAccounts: activeManualAccounts() },
     accounts: store.accountSettings,
     content: store.content,
+    delivery: store.deliverySettings,
+    collections: store.collections,
+    reviews: store.reviews.filter((r) => r.status === 'approved').map(publicReview),
   });
+});
+
+// ---------- Reviews ----------
+
+const publicReview = ({ id, productId, name, rating, text, verified, createdAt }) => ({ id, productId, name, rating, text, verified, createdAt });
+
+const recentReviews = new Map(); // ip -> times, max 5 per hour
+app.post('/api/reviews', (req, res) => {
+  const now = Date.now();
+  const times = (recentReviews.get(req.ip) || []).filter((t) => t > now - 3600 * 1000);
+  if (times.length >= 5) return res.status(429).json({ error: 'Too many reviews. Please try again later.' });
+  const product = store.products.find((p) => p.id === req.body.productId);
+  if (!product) return res.status(404).json({ error: 'Product not found' });
+  const rating = Math.round(Number(req.body.rating));
+  if (!(rating >= 1 && rating <= 5)) return res.status(400).json({ error: 'Please choose 1 to 5 stars' });
+  const name = str(req.body.name, 60);
+  const text = str(req.body.text, 1000);
+  if (name.length < 2) return res.status(400).json({ error: 'Please enter your name' });
+  if (text.length < 3) return res.status(400).json({ error: 'Please write a few words about the product' });
+  recentReviews.set(req.ip, [...times, now]);
+  const user = currentUser(req);
+  // "Verified buyer" when a logged-in customer has an order with this product
+  const verified = Boolean(user && store.orders.some((o) => o.userId === user.id && !LOST_STATUSES.includes(o.status) && o.items.some((i) => i.productId === product.id)));
+  store.reviews.unshift({
+    id: crypto.randomBytes(8).toString('hex'),
+    productId: product.id,
+    productName: product.name,
+    name,
+    rating,
+    text,
+    verified,
+    userId: user?.id,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  });
+  store.reviews.length = Math.min(store.reviews.length, 5000);
+  save();
+  res.json({ ok: true });
 });
 
 // ---------- Customer accounts ----------
@@ -804,6 +896,8 @@ app.post('/api/orders', async (req, res, next) => {
       manualPayment = { accountId: id, type, name, accountTitle, accountNumber, iban, reference, receipt: null };
     }
 
+    const subtotal = Math.round(items.reduce((n, i) => n + i.price * i.qty, 0) * 100) / 100;
+    const deliveryFee = deliveryFeeFor(customer.city, subtotal);
     const order = {
       id: crypto.randomBytes(8).toString('hex'),
       number: store.nextOrderNumber,
@@ -811,7 +905,9 @@ app.post('/api/orders', async (req, res, next) => {
       createdAt: new Date().toISOString(),
       customer,
       items,
-      total: Math.round(items.reduce((n, i) => n + i.price * i.qty, 0) * 100) / 100,
+      subtotal,
+      deliveryFee,
+      total: Math.round((subtotal + deliveryFee) * 100) / 100,
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'unpaid' : 'pending',
       status: 'new',
@@ -922,8 +1018,21 @@ app.all('/api/payments/safepay/cancel/:id/:token', (req, res) => {
 // Admin auth
 app.post('/api/admin/login', (req, res) => {
   const password = str(req.body.password, 200);
+  const username = str(req.body.username, 60).toLowerCase();
   const key = `admin:${req.ip}`;
   if (loginBlocked(key)) return res.status(429).json({ error: 'Too many wrong tries. Please wait 15 minutes.' });
+  if (username) {
+    const staff = store.staff.find((m) => m.username === username && m.active);
+    if (!staff || !password || !verifyPassword(password, staff.passwordHash)) {
+      loginFailed(key);
+      return res.status(401).json({ error: 'Wrong username or password' });
+    }
+    failedLogins.delete(key);
+    staff.lastLoginAt = new Date().toISOString();
+    save();
+    startAdminSession(res, staff);
+    return res.json({ ok: true, mustChangePassword: false });
+  }
   if (!password || !verifyPassword(password, store.admin.passwordHash)) {
     loginFailed(key);
     return res.status(401).json({ error: 'Wrong password' });
@@ -955,15 +1064,22 @@ app.post('/api/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/me', requireAdminSession, (req, res) =>
+app.get('/api/admin/me', requireAdminSession, (req, res) => {
+  if (req.admin.role === 'staff') {
+    const { name, username, permissions } = req.admin.staff;
+    return res.json({ role: 'staff', name, username, permissions, mustChangePassword: false });
+  }
   res.json({
+    role: 'owner',
+    permissions: Object.keys(STAFF_PERMISSIONS),
     mustChangePassword: Boolean(store.admin.mustChangePassword),
     twoFactor: Boolean(store.admin.totp),
     recoveryCodesLeft: (store.admin.recoveryCodes || []).length,
-  })
-);
+  });
+});
 
 app.post('/api/admin/password', requireAdminSession, (req, res) => {
+  if (req.admin.role !== 'owner') return res.status(403).json({ error: 'Ask the store owner to change your password' });
   const current = str(req.body.current, 200);
   const next = str(req.body.next, 200);
   if (!verifyPassword(current, store.admin.passwordHash)) {
@@ -1028,7 +1144,7 @@ app.post('/api/admin/2fa/disable', requireAdmin, (req, res) => {
 });
 
 // Images
-app.post('/api/admin/upload', requireAdmin, (req, res) => {
+app.post('/api/admin/upload', allow('products', 'content'), (req, res) => {
   upload.array('images', 12)(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     try {
@@ -1042,8 +1158,17 @@ app.post('/api/admin/upload', requireAdmin, (req, res) => {
   });
 });
 
+// Admin: product order on the store (drag in the Products tab)
+app.put('/api/admin/products/order', allow('products'), (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  store.products.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9));
+  save();
+  res.json(store.products.map((p) => p.id));
+});
+
 // Products
-app.post('/api/admin/products', requireAdmin, (req, res) => {
+app.post('/api/admin/products', allow('products'), (req, res) => {
   const product = sanitizeProduct(req.body, {
     id: crypto.randomBytes(8).toString('hex'),
     createdAt: new Date().toISOString(),
@@ -1053,7 +1178,7 @@ app.post('/api/admin/products', requireAdmin, (req, res) => {
   res.json(product);
 });
 
-app.put('/api/admin/products/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/products/:id', allow('products'), (req, res) => {
   const idx = store.products.findIndex((p) => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Product not found' });
   const old = store.products[idx];
@@ -1064,7 +1189,7 @@ app.put('/api/admin/products/:id', requireAdmin, (req, res) => {
   res.json(updated);
 });
 
-app.patch('/api/admin/products/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/products/:id', allow('products'), (req, res) => {
   const product = store.products.find((p) => p.id === req.params.id);
   if (!product) return res.status(404).json({ error: 'Product not found' });
   for (const key of ['onSale', 'soldOut', 'featured']) {
@@ -1075,10 +1200,11 @@ app.patch('/api/admin/products/:id', requireAdmin, (req, res) => {
   res.json(product);
 });
 
-app.delete('/api/admin/products/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/products/:id', allow('products'), (req, res) => {
   const idx = store.products.findIndex((p) => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Product not found' });
   const [removed] = store.products.splice(idx, 1);
+  store.collections.forEach((c) => (c.productIds = c.productIds.filter((id) => id !== removed.id)));
   removed.images.forEach(removeUpload);
   save();
   res.json({ ok: true });
@@ -1140,12 +1266,12 @@ app.all('/api/payments/easypaisa/status/:id/:token', express.urlencoded({ extend
 });
 
 // Admin: orders
-app.get('/api/admin/orders', requireAdmin, (req, res) => {
+app.get('/api/admin/orders', allow('orders'), (req, res) => {
   res.json(store.orders.map(({ accessToken, ...o }) => o));
 });
 
 // Re-checks an Easypaisa order with Easypaisa (e.g. the customer closed the page after paying)
-app.post('/api/admin/orders/:id/check-payment', requireAdmin, async (req, res) => {
+app.post('/api/admin/orders/:id/check-payment', allow('orders'), async (req, res) => {
   const order = store.orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   if (order.paymentMethod !== 'easypaisa' || !EASYPAISA.enabled) {
@@ -1161,7 +1287,7 @@ app.post('/api/admin/orders/:id/check-payment', requireAdmin, async (req, res) =
   res.json(rest);
 });
 
-app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/orders/:id', allow('orders'), (req, res) => {
   const order = store.orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
   if (ORDER_STATUSES.includes(req.body.status)) setOrderStatus(order, req.body.status);
@@ -1172,7 +1298,7 @@ app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
   res.json(rest);
 });
 
-app.get('/api/admin/receipts/:file', requireAdmin, async (req, res, next) => {
+app.get('/api/admin/receipts/:file', allow('orders'), async (req, res, next) => {
   const file = path.basename(req.params.file);
   const order = store.orders.find((o) => o.manualPayment?.receipt === file);
   if (!order) return res.status(404).end();
@@ -1277,7 +1403,7 @@ app.post('/api/admin/notify/test', requireAdmin, async (req, res) => {
 });
 
 // Admin: pages, size guide and location
-app.put('/api/admin/content', requireAdmin, (req, res) => {
+app.put('/api/admin/content', allow('content'), (req, res) => {
   const old = contentImages(store.content);
   store.content = sanitizeContent(req.body, { str, safeUrl, isUploadUrl: storage.isUploadUrl });
   old.filter((src) => !isImageInUse(src)).forEach(removeUpload);
@@ -1288,9 +1414,9 @@ app.put('/api/admin/content', requireAdmin, (req, res) => {
 // Admin: "Earn with us" forms
 const APPLICATION_STATUSES = ['new', 'contacted', 'approved', 'rejected'];
 
-app.get('/api/admin/applications', requireAdmin, (req, res) => res.json(store.applications));
+app.get('/api/admin/applications', allow('earn'), (req, res) => res.json(store.applications));
 
-app.patch('/api/admin/applications/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/applications/:id', allow('earn'), (req, res) => {
   const a = store.applications.find((x) => x.id === req.params.id);
   if (!a) return res.status(404).json({ error: 'Form not found' });
   if (APPLICATION_STATUSES.includes(req.body.status)) a.status = req.body.status;
@@ -1298,7 +1424,7 @@ app.patch('/api/admin/applications/:id', requireAdmin, (req, res) => {
   res.json(a);
 });
 
-app.delete('/api/admin/applications/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/applications/:id', allow('earn'), (req, res) => {
   const idx = store.applications.findIndex((x) => x.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Form not found' });
   store.applications.splice(idx, 1);
@@ -1306,8 +1432,145 @@ app.delete('/api/admin/applications/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Admin: delivery charges
+app.put('/api/admin/delivery', allow('payments'), (req, res) => {
+  const cityFees = (Array.isArray(req.body.cityFees) ? req.body.cityFees : [])
+    .map((c) => ({ city: str(c?.city, 60), fee: num(c?.fee) ?? 0 }))
+    .filter((c) => c.city)
+    .slice(0, 100);
+  store.deliverySettings = { fee: num(req.body.fee) ?? 0, freeAbove: num(req.body.freeAbove) ?? 0, cityFees };
+  save();
+  res.json(store.deliverySettings);
+});
+
+// Admin: collections
+app.put('/api/admin/collections', allow('products'), (req, res) => {
+  const productIds = new Set(store.products.map((p) => p.id));
+  const list = (Array.isArray(req.body.collections) ? req.body.collections : []).slice(0, 30).map((c) => ({
+    id: /^[a-f0-9]{12}$/.test(c?.id) ? c.id : crypto.randomBytes(6).toString('hex'),
+    name: str(c?.name, 60),
+    description: str(c?.description, 200),
+    showOnHome: c?.showOnHome !== false,
+    productIds: [...new Set((Array.isArray(c?.productIds) ? c.productIds : []).filter((id) => productIds.has(id)))],
+  }));
+  if (list.some((c) => !c.name)) return res.status(400).json({ error: 'Every collection needs a name' });
+  store.collections = list;
+  save();
+  res.json(store.collections);
+});
+
+// Admin: reviews
+const REVIEW_STATUSES = ['pending', 'approved', 'hidden'];
+
+app.get('/api/admin/reviews', allow('reviews'), (req, res) => res.json(store.reviews));
+
+app.patch('/api/admin/reviews/:id', allow('reviews'), (req, res) => {
+  const r = store.reviews.find((x) => x.id === req.params.id);
+  if (!r) return res.status(404).json({ error: 'Review not found' });
+  if (REVIEW_STATUSES.includes(req.body.status)) r.status = req.body.status;
+  save();
+  res.json(r);
+});
+
+app.delete('/api/admin/reviews/:id', allow('reviews'), (req, res) => {
+  const idx = store.reviews.findIndex((x) => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Review not found' });
+  store.reviews.splice(idx, 1);
+  save();
+  res.json({ ok: true });
+});
+
+// Admin: staff logins (owner only)
+const publicStaff = ({ passwordHash, tokenVersion, ...rest }) => rest;
+
+app.get('/api/admin/staff', requireAdmin, (req, res) =>
+  res.json({ staff: store.staff.map(publicStaff), permissions: STAFF_PERMISSIONS })
+);
+
+app.post('/api/admin/staff', requireAdmin, (req, res) => {
+  const id = str(req.body.id, 20);
+  const existing = id && store.staff.find((m) => m.id === id);
+  if (id && !existing) return res.status(404).json({ error: 'Staff member not found' });
+  const name = str(req.body.name, 60);
+  const username = str(req.body.username, 30).toLowerCase();
+  const password = str(req.body.password, 200);
+  const permissions = (Array.isArray(req.body.permissions) ? req.body.permissions : []).filter((p) => Object.hasOwn(STAFF_PERMISSIONS, p));
+  if (!name) return res.status(400).json({ error: 'Please enter a name' });
+  if (!/^[a-z0-9._-]{3,30}$/.test(username)) return res.status(400).json({ error: 'Username: 3–30 small letters, numbers, dot, dash or underscore' });
+  if (store.staff.some((m) => m.username === username && m.id !== id)) return res.status(400).json({ error: 'This username is already taken' });
+  if (!permissions.length) return res.status(400).json({ error: 'Choose at least one thing this person can do' });
+  if ((!existing || password) && password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const active = req.body.active !== false;
+  const member = existing || { id: crypto.randomBytes(6).toString('hex'), tokenVersion: 1, createdAt: new Date().toISOString() };
+  // A new password, fewer permissions or switching off logs them out everywhere
+  if (existing && (password || !active || existing.permissions.some((p) => !permissions.includes(p)))) member.tokenVersion += 1;
+  Object.assign(member, { name, username, permissions, active });
+  if (password) member.passwordHash = hashPassword(password);
+  if (!existing) store.staff.push(member);
+  save();
+  res.json(publicStaff(member));
+});
+
+app.delete('/api/admin/staff/:id', requireAdmin, (req, res) => {
+  const idx = store.staff.findIndex((m) => m.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Staff member not found' });
+  store.staff.splice(idx, 1);
+  save();
+  res.json({ ok: true });
+});
+
+// Admin: backup — one zip with all data (data.json) and every picture (owner only)
+app.get('/api/admin/backup', requireAdmin, async (req, res, next) => {
+  try {
+    const archiver = require('archiver');
+    const { admin, secret, ...data } = store;
+    data.notifySettings = { ...store.notifySettings, apiKey: '' };
+    const images = new Set([
+      ...store.products.flatMap((p) => p.images || []),
+      ...(store.settings.slides || []).map((s) => s.image),
+      ...contentImages(store.content),
+    ]);
+    const receipts = store.orders.filter((o) => o.manualPayment?.receipt).map((o) => o.manualPayment);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="store-backup-${stamp}.zip"`);
+    const zip = archiver('zip', { zlib: { level: 6 } });
+    zip.on('warning', (err) => console.warn(err));
+    zip.on('error', (err) => {
+      console.error(err);
+      res.destroy(err);
+    });
+    zip.pipe(res);
+    zip.append(JSON.stringify(data, null, 2), { name: 'data.json' });
+    zip.append(
+      `Backup of ${store.settings.storeName}, ${new Date().toLocaleString('en-PK')}\n\n` +
+        'data.json: products, orders, customers, pages, settings (passwords and keys are left out).\n' +
+        'pictures/: product, slider and page pictures. receipts/: payment screenshots.\n',
+      { name: 'README.txt' }
+    );
+    const addFile = async (src, folder) => {
+      const name = `${folder}/${path.basename(src.split('?')[0])}`;
+      if (src.startsWith('/uploads/')) {
+        const file = path.join(storage.UPLOAD_DIR, path.basename(src));
+        if (require('fs').existsSync(file)) zip.file(file, { name });
+      } else if (/^https:\/\//.test(src)) {
+        const r = await fetch(src, { signal: AbortSignal.timeout(20000) }).catch(() => null);
+        if (r?.ok) zip.append(Buffer.from(await r.arrayBuffer()), { name });
+      }
+    };
+    for (const src of images) await addFile(src, 'pictures');
+    for (const m of receipts) {
+      if (m.receiptUrl) await addFile(m.receiptUrl, 'receipts');
+      else if (require('fs').existsSync(storage.receiptPath(m.receipt))) zip.file(storage.receiptPath(m.receipt), { name: `receipts/${m.receipt}` });
+    }
+    await zip.finalize();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Admin: customers
-app.get('/api/admin/users', requireAdmin, (req, res) => {
+app.get('/api/admin/users', allow('customers'), (req, res) => {
   res.json(
     store.users.map((u) => {
       const orders = store.orders.filter((o) => o.userId === u.id && !LOST_STATUSES.includes(o.status));
@@ -1316,7 +1579,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
   );
 });
 
-app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/users/:id', allow('customers'), (req, res) => {
   const user = store.users.find((u) => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'Customer not found' });
   const [profile, error] = sanitizeProfile(req.body, user.id);
@@ -1332,7 +1595,7 @@ app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json(publicUser(user));
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:id', allow('customers'), (req, res) => {
   const idx = store.users.findIndex((u) => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Customer not found' });
   store.users.splice(idx, 1); // their orders stay, with the delivery details on them
@@ -1340,18 +1603,18 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.put('/api/admin/account-settings', requireAdmin, (req, res) => {
+app.put('/api/admin/account-settings', allow('customers'), (req, res) => {
   store.accountSettings = { allowRegistration: Boolean(req.body.allowRegistration), requireLogin: Boolean(req.body.requireLogin) };
   save();
   res.json(store.accountSettings);
 });
 
 // Admin: payment methods
-app.get('/api/admin/payment-settings', requireAdmin, (req, res) => {
+app.get('/api/admin/payment-settings', allow('payments'), (req, res) => {
   res.json({ ...store.paymentSettings, gateways: { safepay: SAFEPAY.enabled, easypaisa: EASYPAISA.enabled } });
 });
 
-app.put('/api/admin/payment-settings', requireAdmin, (req, res) => {
+app.put('/api/admin/payment-settings', allow('payments'), (req, res) => {
   const accounts = Array.isArray(req.body.manualAccounts) ? req.body.manualAccounts.slice(0, 20).map(sanitizeManualAccount) : [];
   const incomplete = accounts.find((a) => !a.accountTitle || !(a.accountNumber || a.iban));
   if (incomplete) return res.status(400).json({ error: 'Every account needs an account title and an account number or IBAN' });
@@ -1365,7 +1628,7 @@ app.put('/api/admin/payment-settings', requireAdmin, (req, res) => {
 });
 
 // Settings
-app.put('/api/admin/settings', requireAdmin, (req, res) => {
+app.put('/api/admin/settings', allow('content'), (req, res) => {
   const body = req.body || {};
   const social = body.social || {};
   const oldSlides = store.settings.slides || [];

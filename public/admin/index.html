@@ -17,6 +17,7 @@
     <form class="login-card" id="loginForm">
       <h1>Dashboard</h1>
       <p>Enter your admin password to manage the store.</p>
+      <input id="loginUsername" placeholder="Username (staff only — owner leaves empty)" autocomplete="username" autocapitalize="none">
       <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" required>
       <button class="btn btn-dark btn-block" type="submit">Log in</button>
       <p class="error" id="loginError"></p>
@@ -51,16 +52,19 @@
   <!-- Dashboard -->
   <div class="app" id="appView" hidden>
     <header class="topbar">
-      <div class="brand">Dashboard</div>
+      <div class="brand">Dashboard <small class="who" id="whoAmI"></small></div>
       <nav class="tabs">
-        <button class="tab active" data-tab="orders">Orders <span class="tab-badge" id="newOrdersBadge" hidden></span></button>
-        <button class="tab" data-tab="products">Products</button>
-        <button class="tab" data-tab="customers">Customers</button>
-        <button class="tab" data-tab="payments">Payments</button>
-        <button class="tab" data-tab="settings">Store &amp; Social</button>
-        <button class="tab" data-tab="pages">Pages</button>
-        <button class="tab" data-tab="earn">Earn with us <span class="tab-badge" id="newEarnBadge" hidden></span></button>
-        <button class="tab" data-tab="security">Security</button>
+        <button class="tab active" data-tab="orders" data-perm="orders">Orders <span class="tab-badge" id="newOrdersBadge" hidden></span></button>
+        <button class="tab" data-tab="products" data-perm="products">Products</button>
+        <button class="tab" data-tab="collections" data-perm="products">Collections</button>
+        <button class="tab" data-tab="reviews" data-perm="reviews">Reviews <span class="tab-badge" id="newReviewsBadge" hidden></span></button>
+        <button class="tab" data-tab="customers" data-perm="customers">Customers</button>
+        <button class="tab" data-tab="payments" data-perm="payments">Payments &amp; Delivery</button>
+        <button class="tab" data-tab="settings" data-perm="content">Store &amp; Social</button>
+        <button class="tab" data-tab="pages" data-perm="content">Pages &amp; Popup</button>
+        <button class="tab" data-tab="earn" data-perm="earn">Earn with us <span class="tab-badge" id="newEarnBadge" hidden></span></button>
+        <button class="tab" data-tab="staff" data-perm="owner">Staff</button>
+        <button class="tab" data-tab="security" data-perm="owner">Security &amp; Backup</button>
       </nav>
       <div class="topbar-actions">
         <a href="/" target="_blank" class="btn btn-ghost btn-sm">View store</a>
@@ -88,6 +92,7 @@
             <option value="cancelled">Cancelled</option>
           </select>
           <button class="btn btn-ghost" id="refreshOrdersBtn">Refresh</button>
+          <button class="btn btn-dark" id="printShownBtn" title="Print a packing slip for every order in the list below">🖨 Print slips</button>
         </div>
         <div class="order-list" id="orderList"></div>
       </section>
@@ -105,7 +110,44 @@
           </select>
           <button class="btn btn-accent" id="addProductBtn">+ Add product</button>
         </div>
+        <p class="hint" id="reorderHint">Drag <b>⠿</b> (or use ↑ ↓) to set the order products show in on the store (“Featured”).</p>
         <div class="product-list" id="productList"></div>
+      </section>
+
+      <!-- Collections -->
+      <section id="tab-collections" hidden>
+        <div class="panel">
+          <h2>Collections</h2>
+          <p class="hint">Group products like “Eid Collection” or “Winter Sale”. Each collection gets a button on the store, and can have its own row on the home page.</p>
+          <div class="btn-row"><button class="btn btn-accent" type="button" id="addCollectionBtn">+ New collection</button></div>
+        </div>
+        <div id="collectionList"></div>
+      </section>
+
+      <!-- Reviews -->
+      <section id="tab-reviews" hidden>
+        <div class="stats" id="reviewStats"></div>
+        <div class="toolbar">
+          <input type="search" id="reviewSearch" placeholder="Search by product, name or text…">
+          <select id="reviewFilter">
+            <option value="pending">Waiting for approval</option>
+            <option value="approved">Approved (on the store)</option>
+            <option value="hidden">Hidden</option>
+            <option value="all">All reviews</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshReviewsBtn">Refresh</button>
+        </div>
+        <div class="product-list" id="reviewList"></div>
+      </section>
+
+      <!-- Staff -->
+      <section id="tab-staff" hidden>
+        <div class="panel">
+          <h2>Staff logins</h2>
+          <p class="hint">Give your team their own login with only the parts they need — e.g. a packer who sees orders but cannot change prices. Staff log in on this page with their <b>username</b> and password. Only you (the owner) can manage staff, security and backups.</p>
+          <div class="btn-row"><button class="btn btn-accent" type="button" id="addStaffBtn">+ Add staff</button></div>
+        </div>
+        <div class="product-list" id="staffList"></div>
       </section>
 
       <!-- Customers -->
@@ -145,6 +187,21 @@
             <button type="button" class="btn btn-ghost" id="addManualBtn">+ Add account</button>
           </div>
           <div class="save-bar"><button class="btn btn-accent" type="submit">Save payment settings</button></div>
+        </form>
+
+        <form id="deliveryForm" class="panel" novalidate>
+          <h2>Delivery charges</h2>
+          <p class="hint">Added to the order total at checkout. Set 0 for free delivery.</p>
+          <div class="row">
+            <label>Normal delivery charge <input name="fee" type="number" min="0" step="1"></label>
+            <label>Free delivery on orders above <small>0 = never free</small><input name="freeAbove" type="number" min="0" step="1"></label>
+          </div>
+          <div class="label">Different charge for some cities <small>e.g. your own city cheaper</small></div>
+          <div class="city-fees" id="cityFees"></div>
+          <div class="btn-row">
+            <button class="btn btn-ghost" type="button" id="addCityFeeBtn">+ Add city</button>
+            <button class="btn btn-accent" type="submit">Save delivery charges</button>
+          </div>
         </form>
       </section>
 
@@ -268,6 +325,12 @@
           </form>
 
           <div class="panel" id="twoFactorPanel"></div>
+
+          <div class="panel">
+            <h2>Backup</h2>
+            <p class="hint">Download everything in one .zip file: products, orders, customers, pages and settings (<code>data.json</code>) plus all pictures and payment screenshots. Keep a copy on your computer or Google Drive every week.</p>
+            <div class="btn-row"><a class="btn btn-accent" href="/api/admin/backup" id="backupBtn" download>⬇ Download backup</a></div>
+          </div>
         </div>
       </section>
     </main>
@@ -296,6 +359,30 @@
       <div class="editor-foot">
         <button type="button" class="btn btn-ghost" data-close>Cancel</button>
         <button type="submit" class="btn btn-accent" id="saveUserBtn">Save customer</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Staff editor -->
+  <div class="overlay" id="staffEditor" hidden>
+    <form class="editor" id="staffForm" novalidate>
+      <div class="editor-head">
+        <h2 id="staffEditorTitle">Add staff</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      </div>
+      <div class="editor-body">
+        <label>Name <input name="name" maxlength="60" required></label>
+        <label>Username <small>For logging in: small letters and numbers, e.g. ali.packing</small><input name="username" maxlength="30" autocapitalize="none" required></label>
+        <label>Password <small id="staffPwHelp">At least 8 characters</small><input name="password" type="text" autocomplete="new-password" maxlength="200"></label>
+        <div class="field-block">
+          <div class="label">What can this person do?</div>
+          <div class="switches switches-col" id="staffPerms"></div>
+        </div>
+        <label class="switch"><input type="checkbox" name="active"><span></span> Can log in</label>
+      </div>
+      <div class="editor-foot">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-accent" id="saveStaffBtn">Save staff</button>
       </div>
     </form>
   </div>

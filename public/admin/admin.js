@@ -50,23 +50,39 @@
     showLoginStep('forceForm');
   }
 
+  // Owner sees everything; staff only the tabs they are allowed
+  const can = (perm) => state.me?.role === 'owner' || (perm !== 'owner' && state.me?.permissions.includes(perm));
+
   async function showApp() {
-    const data = await api('/api/store');
+    const [me, data] = await Promise.all([api('/api/admin/me'), api('/api/store')]);
+    state.me = me;
     state.settings = data.settings;
     state.products = data.products;
+    state.collections = data.collections || [];
+    state.delivery = data.delivery || { fee: 0, freeAbove: 0, cityFees: [] };
     $('loginView').hidden = true;
     $('appView').hidden = false;
     state.accountSettings = data.accounts || {};
     state.content = data.content;
+    $('whoAmI').textContent = me.role === 'staff' ? `· ${me.name}` : '';
+    document.querySelectorAll('.tab').forEach((t) => (t.hidden = !can(t.dataset.perm)));
+    const current = document.querySelector('.tab.active');
+    if (current.hidden) document.querySelector('.tab:not([hidden])')?.click();
     renderProducts();
     fillSettings();
     renderContent();
-    loadApplications();
-    loadNotify();
-    loadOrders();
-    loadUsers();
-    loadPaymentSettings();
-    loadSecurity();
+    renderCollections();
+    renderDelivery();
+    if (can('earn')) loadApplications();
+    if (can('orders')) loadOrders();
+    if (can('customers')) loadUsers();
+    if (can('payments')) loadPaymentSettings();
+    if (can('reviews')) loadReviews();
+    if (can('owner')) {
+      loadNotify();
+      loadSecurity();
+      loadStaff();
+    }
   }
 
   const afterLogin = (res) => (res.mustChangePassword ? showForce() : showApp());
@@ -76,7 +92,7 @@
     e.preventDefault();
     $('loginError').textContent = '';
     try {
-      const res = await api('/api/admin/login', { method: 'POST', body: { password: $('loginPassword').value } });
+      const res = await api('/api/admin/login', { method: 'POST', body: { username: $('loginUsername').value.trim(), password: $('loginPassword').value } });
       $('loginPassword').value = '';
       if (res.twoFactor) {
         loginTicket = res.ticket;
@@ -268,9 +284,13 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      ['orders', 'products', 'customers', 'payments', 'settings', 'pages', 'earn', 'security'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
+      ['orders', 'products', 'collections', 'reviews', 'customers', 'payments', 'settings', 'pages', 'earn', 'staff', 'security'].forEach(
+        (name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name)
+      );
       if (tab.dataset.tab === 'security') loadSecurity();
       if (tab.dataset.tab === 'earn') loadApplications();
+      if (tab.dataset.tab === 'reviews') loadReviews();
+      if (tab.dataset.tab === 'collections') renderCollections();
     })
   );
 
@@ -297,6 +317,69 @@
     }
   }
 
+  function shownOrders() {
+    const q = state.orderSearch.toLowerCase();
+    return state.orders.filter((o) => {
+      if (state.orderFilter !== 'all' && o.status !== state.orderFilter) return false;
+      const c = o.customer;
+      return !q || `#${o.number} ${o.number} ${c.firstName} ${c.lastName} ${c.phone} ${c.city} ${c.email} ${o.manualPayment?.reference || ''}`.toLowerCase().includes(q);
+    });
+  }
+
+  // ---------- packing slips ----------
+  // Opens a print-ready page: one slip per order (name, address, items, amount to collect).
+  function printSlips(orders) {
+    if (!orders.length) return toast('No orders to print', true);
+    const s = state.settings;
+    const contact = [s.social?.phone || s.social?.whatsapp, s.social?.email].filter(Boolean).join(' · ');
+    const slip = (o) => {
+      const c = o.customer;
+      const collect = o.paymentStatus === 'paid' ? 0 : o.paymentMethod === 'cod' ? o.total : 0;
+      const payNote = o.paymentStatus === 'paid' ? 'PAID' : o.paymentMethod === 'cod' ? 'CASH ON DELIVERY' : 'PAYMENT PENDING — check before sending';
+      return `
+      <section class="slip">
+        <header><div><h1>${escapeHtml(s.storeName)}</h1>${contact ? `<p>${escapeHtml(contact)}</p>` : ''}</div>
+          <div class="no"><b>Order #${o.number}</b><span>${new Date(o.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}</span></div></header>
+        <div class="to"><small>DELIVER TO</small>
+          <b>${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</b>
+          <span>📞 ${escapeHtml(c.phone)}</span>
+          <span>${escapeHtml(c.address)}</span>
+          <b class="city">${escapeHtml(c.city)}</b>
+          ${c.notes ? `<i>Note: ${escapeHtml(c.notes)}</i>` : ''}</div>
+        <table><thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead><tbody>
+          ${o.items.map((i) => `<tr><td>${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</td><td>${i.qty}</td><td>${money(i.price * i.qty)}</td></tr>`).join('')}
+        </tbody></table>
+        <div class="sums">
+          ${o.deliveryFee ? `<div><span>Subtotal</span><span>${money(o.subtotal ?? o.total - o.deliveryFee)}</span></div><div><span>Delivery</span><span>${money(o.deliveryFee)}</span></div>` : ''}
+          <div><span>Total</span><span>${money(o.total)}</span></div>
+        </div>
+        <div class="collect"><span>${payNote}</span><b>${collect ? `Collect ${money(collect)}` : 'Collect Rs. 0'}</b></div>
+      </section>`;
+    };
+    const w = window.open('', '_blank');
+    if (!w) return toast('Please allow pop-ups for this site to print', true);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Packing slips</title><style>
+      *{box-sizing:border-box} body{font-family:system-ui,-apple-system,sans-serif;margin:0;color:#111}
+      .bar{padding:12px;text-align:center;background:#f4f1ec} .bar button{font:inherit;font-weight:700;padding:10px 24px;border-radius:8px;border:0;background:#111;color:#fff;cursor:pointer}
+      .slip{width:148mm;min-height:190mm;margin:10mm auto;padding:8mm;border:1.5px dashed #999;page-break-after:always;display:flex;flex-direction:column;gap:5mm;font-size:12pt}
+      header{display:flex;justify-content:space-between;gap:8mm;border-bottom:2px solid #111;padding-bottom:3mm} h1{margin:0;font-size:18pt} header p{margin:1mm 0 0;font-size:10pt}
+      .no{text-align:right;display:flex;flex-direction:column} .no b{font-size:15pt}
+      .to{display:flex;flex-direction:column;gap:1mm;border:2px solid #111;border-radius:3mm;padding:4mm;font-size:13pt} .to small{font-size:9pt;letter-spacing:1px;color:#555} .to .city{font-size:16pt;text-transform:uppercase}
+      table{width:100%;border-collapse:collapse;font-size:11pt} th,td{border-bottom:1px solid #ccc;padding:2mm 1mm;text-align:left} th:nth-child(n+2),td:nth-child(n+2){text-align:right;white-space:nowrap}
+      .sums{display:grid;gap:1mm;margin-left:auto;min-width:60%} .sums div{display:flex;justify-content:space-between} .sums div:last-child{font-weight:800;font-size:13pt;border-top:1px solid #111;padding-top:1mm}
+      .collect{margin-top:auto;display:flex;justify-content:space-between;align-items:center;background:#111;color:#fff;padding:4mm;border-radius:3mm} .collect b{font-size:16pt}
+      @media print{.bar{display:none} .slip{margin:0 auto;border:0}} @page{size:A5;margin:6mm}
+    </style></head><body><div class="bar"><button onclick="print()">🖨 Print ${orders.length} slip(s)</button></div>${orders.map(slip).join('')}</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+  }
+
+  $('printShownBtn').addEventListener('click', () => {
+    const list = shownOrders();
+    if (list.length > 30 && !confirm(`Print ${list.length} slips?`)) return;
+    printSlips(list);
+  });
+
   function renderOrders() {
     const all = state.orders;
     const sum = (list) => list.reduce((n, o) => n + o.total, 0);
@@ -322,12 +405,7 @@
       card('all', money(sum(active.filter((o) => o.paymentStatus === 'paid'))), 'Payment received'),
     ].join('');
 
-    const q = state.orderSearch.toLowerCase();
-    const list = all.filter((o) => {
-      if (state.orderFilter !== 'all' && o.status !== state.orderFilter) return false;
-      const c = o.customer;
-      return !q || `#${o.number} ${o.number} ${c.firstName} ${c.lastName} ${c.phone} ${c.city} ${c.email} ${o.manualPayment?.reference || ''}`.toLowerCase().includes(q);
-    });
+    const list = shownOrders();
 
     $('orderList').innerHTML = list.length
       ? list
@@ -345,6 +423,7 @@
               <select class="status-select" data-order-status aria-label="Order status">
                 ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
               </select>
+              <button class="btn btn-sm btn-ghost" data-print-slip title="Print packing slip">🖨 Slip</button>
             </header>
             <div class="quick-status">
               <span>Mark as:</span>
@@ -360,6 +439,7 @@
               </div>
               <div class="order-items">
                 ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+                ${o.deliveryFee ? `<div class="pmeta"><span>Delivery</span><span>${money(o.deliveryFee)}</span></div>` : ''}
                 <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
                 ${o.safepay?.reference ? `<div class="pmeta">Safepay ref: ${escapeHtml(o.safepay.reference)}</div>` : ''}
                 ${o.manualPayment ? `<div class="pmeta">Paid to: ${escapeHtml([o.manualPayment.name, o.manualPayment.accountTitle, o.manualPayment.accountNumber || o.manualPayment.iban].filter(Boolean).join(' · '))}</div>
@@ -402,6 +482,10 @@
   });
 
   $('orderList').addEventListener('click', async (e) => {
+    if (e.target.closest('[data-print-slip]')) {
+      printSlips([state.orders.find((o) => o.id === e.target.closest('.order').dataset.id)]);
+      return;
+    }
     const quick = e.target.closest('[data-quick-status]');
     if (quick) {
       const order = state.orders.find((o) => o.id === e.target.closest('.order').dataset.id);
@@ -688,13 +772,22 @@
       return !q || `${p.name} ${p.category}`.toLowerCase().includes(q);
     });
 
+    // Reordering only makes sense on the full list
+    const reorder = state.filter === 'all' && !q;
+    $('reorderHint').hidden = !reorder || all.length < 2;
+    $('productList').classList.toggle('reorderable', reorder);
     $('productList').innerHTML = list.length
       ? list
-          .map((p) => {
+          .map((p, i) => {
             const img = p.images?.[0];
             const hasDiscount = p.onSale && p.salePrice != null;
             return `
-          <div class="prow${p.soldOut ? ' is-sold' : ''}" data-id="${escapeHtml(p.id)}">
+          <div class="prow${p.soldOut ? ' is-sold' : ''}" data-id="${escapeHtml(p.id)}"${reorder ? ' draggable="true"' : ''}>
+            ${reorder ? `<div class="reorder">
+              <button type="button" data-move="-1" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+              <span class="grip" title="Drag to move">⠿</span>
+              <button type="button" data-move="1" aria-label="Move down" ${i === list.length - 1 ? 'disabled' : ''}>↓</button>
+            </div>` : ''}
             <div class="pthumb" style="${img ? '' : 'background:#c9a3a0'}">${img ? `<img src="${escapeHtml(img)}" alt="">` : escapeHtml(p.name.charAt(0))}</div>
             <div>
               <div class="pname">${escapeHtml(p.name)}</div>
@@ -716,6 +809,54 @@
       : '<div class="empty">No products here yet. Click “+ Add product”.</div>';
   }
 
+  // ---------- product order (drag, or ↑ ↓ on phones) ----------
+  async function saveProductOrder() {
+    try {
+      await api('/api/admin/products/order', { method: 'PUT', body: { ids: state.products.map((p) => p.id) } });
+      toast('Order saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function moveProduct(id, toIndex) {
+    const from = state.products.findIndex((p) => p.id === id);
+    const [item] = state.products.splice(from, 1);
+    state.products.splice(Math.max(0, Math.min(toIndex, state.products.length)), 0, item);
+    renderProducts();
+    saveProductOrder();
+  }
+
+  let draggedId = null;
+  $('productList').addEventListener('dragstart', (e) => {
+    const row = e.target.closest('.prow');
+    if (!row) return;
+    draggedId = row.dataset.id;
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  $('productList').addEventListener('dragend', () => {
+    draggedId = null;
+    document.querySelectorAll('.prow.dragging, .prow.drop-before, .prow.drop-after').forEach((r) => r.classList.remove('dragging', 'drop-before', 'drop-after'));
+  });
+  $('productList').addEventListener('dragover', (e) => {
+    const row = e.target.closest('.prow');
+    if (!draggedId || !row) return;
+    e.preventDefault();
+    const after = e.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
+    document.querySelectorAll('.prow.drop-before, .prow.drop-after').forEach((r) => r.classList.remove('drop-before', 'drop-after'));
+    row.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  $('productList').addEventListener('drop', (e) => {
+    const row = e.target.closest('.prow');
+    if (!draggedId || !row || row.dataset.id === draggedId) return;
+    e.preventDefault();
+    const after = row.classList.contains('drop-after');
+    const without = state.products.filter((p) => p.id !== draggedId);
+    const target = without.findIndex((p) => p.id === row.dataset.id) + (after ? 1 : 0);
+    moveProduct(draggedId, target);
+  });
+
   $('productSearch').addEventListener('input', (e) => {
     state.search = e.target.value.trim();
     renderProducts();
@@ -729,6 +870,12 @@
     const row = e.target.closest('.prow');
     if (!row) return;
     const product = state.products.find((p) => p.id === row.dataset.id);
+
+    const move = e.target.closest('[data-move]');
+    if (move) {
+      moveProduct(product.id, state.products.indexOf(product) + Number(move.dataset.move));
+      return;
+    }
 
     const toggle = e.target.closest('[data-toggle]');
     if (toggle) {
@@ -876,6 +1023,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('editor').hidden) closeEditor();
     if (e.key === 'Escape' && !$('userEditor').hidden) closeUserEditor();
+    if (e.key === 'Escape' && !$('staffEditor').hidden) closeStaffEditor();
   });
 
   form.addEventListener('submit', async (e) => {
@@ -1092,7 +1240,24 @@
           <label>Text <small>${TEXT_HELP}</small><textarea data-content="pages.${key}.text" rows="8" maxlength="8000">${escapeHtml(p.text)}</textarea></label>
         </div>`;
     };
+    const pp = c.popup;
     contentForm.innerHTML = `
+      <div class="panel panel-wide">
+        <h2>Offer popup</h2>
+        <p class="hint">A box that opens when someone visits the store — for a sale, new arrivals or free delivery. Each visitor sees it once a day (again if you change it).</p>
+        <label class="switch"><input type="checkbox" data-content="popup.enabled"${pp.enabled ? ' checked' : ''}><span></span> Show the popup on the store</label>
+        <div class="row">
+          <div class="field-block">${imageBlock('popup.image', pp.image)}</div>
+          <div class="field-block">
+            <label>Heading <input data-content="popup.title" maxlength="80" value="${escapeHtml(pp.title)}"></label>
+            <label>Text <textarea data-content="popup.text" rows="3" maxlength="400">${escapeHtml(pp.text)}</textarea></label>
+            <div class="row">
+              <label>Button text <small>Empty = no button</small><input data-content="popup.buttonText" maxlength="30" value="${escapeHtml(pp.buttonText)}"></label>
+              <label>Button goes to <small>#shop, #about or a web link</small><input data-content="popup.buttonLink" maxlength="300" value="${escapeHtml(pp.buttonLink)}"></label>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="panel">
         <h2>Size guide</h2>
         <p class="hint">Customers see a “Size guide” link next to the sizes of every product. Write rows like <code>Size | Chest | Length</code> to show a table, or add a picture of your size chart.</p>
@@ -1233,6 +1398,337 @@
       toast('API key removed');
     } catch (err) {
       toast(err.message, true);
+    }
+  });
+
+  // ---------- collections ----------
+  function renderCollections() {
+    const byId = new Map(state.products.map((p) => [p.id, p]));
+    $('collectionList').innerHTML = state.collections.length
+      ? state.collections
+          .map(
+            (c, i) => `
+        <div class="panel collection-card" data-index="${i}">
+          <div class="row">
+            <label>Name <input data-col="name" maxlength="60" value="${escapeHtml(c.name)}" placeholder="Eid Collection"></label>
+            <label>Short line <small>Optional</small><input data-col="description" maxlength="200" value="${escapeHtml(c.description || '')}" placeholder="New arrivals for Eid"></label>
+          </div>
+          <label class="switch"><input type="checkbox" data-col="showOnHome"${c.showOnHome ? ' checked' : ''}><span></span> Show as a row on the home page</label>
+          <div class="label">Products <small>${c.productIds.length} selected — tap to add or remove</small></div>
+          <input type="search" class="col-search" placeholder="Search products…" data-col-search>
+          <div class="col-products">
+            ${state.products
+              .map((p) => {
+                const on = c.productIds.includes(p.id);
+                const img = p.images?.[0];
+                return `<button type="button" class="col-product${on ? ' on' : ''}" data-col-product="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name.toLowerCase())}">
+                  ${img ? `<img src="${escapeHtml(img)}" alt="">` : `<span class="ph">${escapeHtml(p.name.charAt(0))}</span>`}<span>${escapeHtml(p.name)}</span>${on ? '<b>✓</b>' : ''}</button>`;
+              })
+              .join('')}
+          </div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-accent" data-col-save>Save collection</button>
+            <button type="button" class="btn btn-ghost" data-col-delete>Delete collection</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : '<div class="empty">No collections yet. Click “+ New collection”.</div>';
+    // keep products in a collection that were deleted out of the count
+    state.collections.forEach((c) => (c.productIds = c.productIds.filter((id) => byId.has(id))));
+  }
+
+  function readCollections() {
+    document.querySelectorAll('.collection-card').forEach((card) => {
+      const c = state.collections[Number(card.dataset.index)];
+      card.querySelectorAll('[data-col]').forEach((el) => (c[el.dataset.col] = el.type === 'checkbox' ? el.checked : el.value));
+    });
+  }
+
+  async function saveCollections(message = 'Collections saved') {
+    try {
+      state.collections = await api('/api/admin/collections', { method: 'PUT', body: { collections: state.collections } });
+      renderCollections();
+      toast(message);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  $('addCollectionBtn').addEventListener('click', () => {
+    readCollections();
+    state.collections.push({ name: '', description: '', showOnHome: true, productIds: [] });
+    renderCollections();
+    document.querySelector('.collection-card:last-child [data-col=name]').focus();
+  });
+
+  $('collectionList').addEventListener('click', (e) => {
+    const card = e.target.closest('.collection-card');
+    if (!card) return;
+    const c = state.collections[Number(card.dataset.index)];
+    const pick = e.target.closest('[data-col-product]');
+    if (pick) {
+      const id = pick.dataset.colProduct;
+      c.productIds = c.productIds.includes(id) ? c.productIds.filter((x) => x !== id) : [...c.productIds, id];
+      const on = c.productIds.includes(id);
+      pick.classList.toggle('on', on);
+      pick.querySelector('b')?.remove();
+      if (on) pick.insertAdjacentHTML('beforeend', '<b>✓</b>');
+      card.querySelector('.label small').textContent = `${c.productIds.length} selected — tap to add or remove`;
+    }
+    if (e.target.closest('[data-col-save]')) {
+      readCollections();
+      saveCollections();
+    }
+    if (e.target.closest('[data-col-delete]') && confirm(`Delete the collection "${c.name || 'untitled'}"? The products stay in the store.`)) {
+      readCollections();
+      state.collections.splice(Number(card.dataset.index), 1);
+      saveCollections('Collection deleted');
+    }
+  });
+
+  $('collectionList').addEventListener('input', (e) => {
+    if (!e.target.matches('[data-col-search]')) return;
+    const q = e.target.value.trim().toLowerCase();
+    e.target.closest('.collection-card').querySelectorAll('[data-col-product]').forEach((b) => (b.hidden = q && !b.dataset.name.includes(q)));
+  });
+
+  // ---------- reviews ----------
+  const REVIEW_LABELS = { pending: 'Waiting', approved: 'On the store', hidden: 'Hidden' };
+  state.reviews = [];
+  state.reviewFilter = 'pending';
+  state.reviewSearch = '';
+
+  async function loadReviews() {
+    try {
+      state.reviews = await api('/api/admin/reviews');
+      renderReviews();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderReviews() {
+    const all = state.reviews;
+    const count = (st) => all.filter((r) => r.status === st).length;
+    $('newReviewsBadge').textContent = count('pending');
+    $('newReviewsBadge').hidden = !count('pending');
+    const avg = all.filter((r) => r.status === 'approved');
+    $('reviewStats').innerHTML = [
+      [count('pending'), 'Waiting for approval'],
+      [count('approved'), 'On the store'],
+      [avg.length ? (avg.reduce((n, r) => n + r.rating, 0) / avg.length).toFixed(1) + ' ★' : '–', 'Average rating'],
+      [all.length, 'All reviews'],
+    ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join('');
+    const q = state.reviewSearch.toLowerCase();
+    const list = all.filter((r) => (state.reviewFilter === 'all' || r.status === state.reviewFilter) && (!q || `${r.productName} ${r.name} ${r.text}`.toLowerCase().includes(q)));
+    $('reviewList').innerHTML = list.length
+      ? list
+          .map(
+            (r) => `
+        <div class="urow review-row status-${r.status}" data-id="${escapeHtml(r.id)}">
+          <div class="avatar">${r.rating}★</div>
+          <div>
+            <div class="pname">${'★'.repeat(r.rating)}<span class="off">${'★'.repeat(5 - r.rating)}</span> ${escapeHtml(r.name)}${r.verified ? '<span class="badge-user">Verified buyer</span>' : ''}</div>
+            <div class="pmeta">${escapeHtml(r.productName || 'Deleted product')} · ${new Date(r.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+            <div class="review-text">${escapeHtml(r.text)}</div>
+          </div>
+          <span class="review-status">${REVIEW_LABELS[r.status]}</span>
+          <div class="pactions">
+            ${r.status !== 'approved' ? '<button class="btn btn-sm btn-accent" data-review="approved">Approve</button>' : '<button class="btn btn-sm btn-ghost" data-review="hidden">Hide</button>'}
+            <button class="btn btn-sm btn-ghost" data-review="delete">Delete</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : `<div class="empty">${all.length ? 'No reviews here.' : 'No reviews yet. Customers can write one on any product.'}</div>`;
+  }
+
+  $('reviewList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-review]');
+    if (!btn) return;
+    const id = e.target.closest('.review-row').dataset.id;
+    try {
+      if (btn.dataset.review === 'delete') {
+        if (!confirm('Delete this review?')) return;
+        await api(`/api/admin/reviews/${id}`, { method: 'DELETE' });
+        state.reviews = state.reviews.filter((r) => r.id !== id);
+      } else {
+        Object.assign(state.reviews.find((r) => r.id === id), await api(`/api/admin/reviews/${id}`, { method: 'PATCH', body: { status: btn.dataset.review } }));
+      }
+      renderReviews();
+      toast(btn.dataset.review === 'approved' ? 'Review is on the store' : 'Updated');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+  $('reviewSearch').addEventListener('input', (e) => {
+    state.reviewSearch = e.target.value.trim();
+    renderReviews();
+  });
+  $('reviewFilter').addEventListener('change', (e) => {
+    state.reviewFilter = e.target.value;
+    renderReviews();
+  });
+  $('refreshReviewsBtn').addEventListener('click', loadReviews);
+
+  // ---------- delivery charges ----------
+  const deliveryForm = $('deliveryForm');
+
+  function renderDelivery() {
+    const d = state.delivery;
+    deliveryForm.fee.value = d.fee || 0;
+    deliveryForm.freeAbove.value = d.freeAbove || 0;
+    $('cityFees').innerHTML = d.cityFees
+      .map(
+        (c, i) => `
+      <div class="city-fee" data-index="${i}">
+        <input data-city="city" maxlength="60" placeholder="City, e.g. Lahore" value="${escapeHtml(c.city)}" aria-label="City">
+        <input data-city="fee" type="number" min="0" step="1" placeholder="Charge" value="${c.fee}" aria-label="Charge">
+        <button type="button" class="btn btn-sm btn-ghost" data-city-remove aria-label="Remove">✕</button>
+      </div>`
+      )
+      .join('');
+  }
+
+  function readCityFees() {
+    state.delivery.cityFees = [...document.querySelectorAll('.city-fee')].map((row) => ({
+      city: row.querySelector('[data-city=city]').value,
+      fee: Number(row.querySelector('[data-city=fee]').value) || 0,
+    }));
+  }
+
+  $('addCityFeeBtn').addEventListener('click', () => {
+    readCityFees();
+    state.delivery.cityFees.push({ city: '', fee: 0 });
+    renderDelivery();
+    document.querySelector('.city-fee:last-child [data-city=city]').focus();
+  });
+  $('cityFees').addEventListener('click', (e) => {
+    const remove = e.target.closest('[data-city-remove]');
+    if (!remove) return;
+    readCityFees();
+    state.delivery.cityFees.splice(Number(remove.closest('.city-fee').dataset.index), 1);
+    renderDelivery();
+  });
+  deliveryForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    readCityFees();
+    try {
+      state.delivery = await api('/api/admin/delivery', {
+        method: 'PUT',
+        body: { fee: Number(deliveryForm.fee.value) || 0, freeAbove: Number(deliveryForm.freeAbove.value) || 0, cityFees: state.delivery.cityFees },
+      });
+      renderDelivery();
+      toast('Delivery charges saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // ---------- staff ----------
+  const staffForm = $('staffForm');
+  state.staff = [];
+  state.permissionLabels = {};
+
+  async function loadStaff() {
+    try {
+      const data = await api('/api/admin/staff');
+      state.staff = data.staff;
+      state.permissionLabels = data.permissions;
+      renderStaff();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderStaff() {
+    $('staffList').innerHTML = state.staff.length
+      ? state.staff
+          .map(
+            (m) => `
+        <div class="urow${m.active ? '' : ' is-blocked'}" data-id="${escapeHtml(m.id)}">
+          <div class="avatar">${escapeHtml(m.name.slice(0, 2).toUpperCase())}</div>
+          <div>
+            <div class="pname">${escapeHtml(m.name)} <span class="pmeta">@${escapeHtml(m.username)}</span>${m.active ? '' : '<span class="badge-blocked">Cannot log in</span>'}</div>
+            <div class="pmeta">${m.permissions.map((p) => escapeHtml((state.permissionLabels[p] || p).split(' (')[0])).join(' · ')}</div>
+            <div class="pmeta">${m.lastLoginAt ? `Last login ${new Date(m.lastLoginAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}` : 'Not logged in yet'}</div>
+          </div>
+          <div></div>
+          <div class="pactions">
+            <button class="btn btn-sm btn-dark" data-staff="edit">Edit</button>
+            <button class="btn btn-sm btn-ghost" data-staff="delete">Delete</button>
+          </div>
+        </div>`
+          )
+          .join('')
+      : '<div class="empty">No staff yet. Click “+ Add staff”.</div>';
+  }
+
+  function openStaffEditor(member = null) {
+    state.editingStaff = member;
+    staffForm.reset();
+    $('staffEditorTitle').textContent = member ? 'Edit staff' : 'Add staff';
+    $('staffPwHelp').textContent = member ? 'Leave empty to keep the current password (a new one logs them out)' : 'At least 8 characters';
+    staffForm.name.value = member?.name || '';
+    staffForm.username.value = member?.username || '';
+    staffForm.active.checked = member ? member.active : true;
+    $('staffPerms').innerHTML = Object.entries(state.permissionLabels)
+      .map(([key, label]) => `<label class="switch"><input type="checkbox" value="${key}"${member?.permissions.includes(key) || (!member && key === 'orders') ? ' checked' : ''}><span></span> ${escapeHtml(label)}</label>`)
+      .join('');
+    $('staffEditor').hidden = false;
+    document.body.style.overflow = 'hidden';
+    staffForm.name.focus();
+  }
+
+  function closeStaffEditor() {
+    $('staffEditor').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  $('addStaffBtn').addEventListener('click', () => openStaffEditor());
+  $('staffEditor').addEventListener('click', (e) => {
+    if (e.target === $('staffEditor') || e.target.closest('[data-close]')) closeStaffEditor();
+  });
+  $('staffList').addEventListener('click', async (e) => {
+    const action = e.target.closest('[data-staff]')?.dataset.staff;
+    if (!action) return;
+    const member = state.staff.find((m) => m.id === e.target.closest('.urow').dataset.id);
+    if (action === 'edit') openStaffEditor(member);
+    if (action === 'delete' && confirm(`Delete ${member.name}'s login?`)) {
+      try {
+        await api(`/api/admin/staff/${member.id}`, { method: 'DELETE' });
+        state.staff = state.staff.filter((m) => m.id !== member.id);
+        renderStaff();
+        toast('Staff login deleted');
+      } catch (err) {
+        toast(err.message, true);
+      }
+    }
+  });
+  staffForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+      id: state.editingStaff?.id,
+      name: staffForm.name.value,
+      username: staffForm.username.value,
+      password: staffForm.password.value,
+      active: staffForm.active.checked,
+      permissions: [...$('staffPerms').querySelectorAll('input:checked')].map((i) => i.value),
+    };
+    $('saveStaffBtn').disabled = true;
+    try {
+      const saved = await api('/api/admin/staff', { method: 'POST', body });
+      const i = state.staff.findIndex((m) => m.id === saved.id);
+      if (i === -1) state.staff.push(saved);
+      else state.staff[i] = saved;
+      renderStaff();
+      closeStaffEditor();
+      toast(`Saved. ${saved.name} logs in with username "${saved.username}".`);
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      $('saveStaffBtn').disabled = false;
     }
   });
 

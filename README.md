@@ -19,6 +19,14 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - **Pages** tab: Size guide (text/table aur picture), dukaan ki location, aur About us, Shipping, Return, Terms, Earn with us — har page ka title, text aur picture
   - **Earn with us** tab: bhare hue forms (call, WhatsApp, email links), status New / Contacted / Approved / Rejected, delete
   - **WhatsApp alerts** (Store & Social tab ke neeche): har naye order (aur chahein to "Earn with us" form) pe aapke WhatsApp pe khud message. Free CallMeBot service se: phone me **+34 684 78 33 47** save karein, us ko WhatsApp pe `I allow callmebot to send me messages` bhejein, jo **API key** aaye woh apne number ke saath yahan daalein, save karein aur "Send test message" dabayein
+  - **Collections** tab: "Eid Collection", "Winter Sale" jaise groups — products chunein; store pe button aur (chahein to) home page pe alag row
+  - **Reviews** tab: customer har product pe stars aur comment deta hai; aap **Approve** karein to store pe dikhta hai (Hide / Delete bhi). Login customer ne woh product khareeda ho to "Verified buyer"
+  - **Products** tab me products ko **drag** (ya ↑ ↓) kar ke tarteeb badlein — store pe "Featured" isi tarteeb se
+  - **Payments & Delivery** tab: **delivery charge** (normal), kuch shehron ka alag charge, aur itne se upar **free delivery**; checkout me subtotal + delivery + total dikhta hai
+  - **Pages & Popup** tab: **Offer popup** — picture, heading, text, button; on/off. Har visitor ko din me ek dafa dikhta hai
+  - **Orders** tab: har order pe **🖨 Slip** (parcel pe lagane wali parchi: naam, phone, address, items, COD raqam) aur upar **Print slips** se list ke saare orders ek saath
+  - **Staff** tab (sirf owner): staff ke alag login (username + password) aur har ek ke kaam chunein — jaise packing wala sirf Orders dekhe, price na badal sake. Staff login page pe apna username likhta hai
+  - **Security & Backup** tab: **Download backup** — saara data (data.json) aur saari pictures ek .zip me
   - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein
 
 ## Chalane ka tareeqa
