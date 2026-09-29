@@ -1,31 +1,38 @@
 // Emergency admin reset: sets a new temporary password and turns off Google Authenticator.
-// Use it if the admin password or phone is lost. Stop the server first (Ctrl + C), then run:
+// Use it if the admin password or phone is lost.
+//
+// On your own computer: stop the server first (Ctrl + C), then run:
 //   npm run reset-admin
+// For a store on Vercel: copy KV_REST_API_URL and KV_REST_API_TOKEN from
+// Vercel > Project > Settings > Environment Variables, then run:
+//   KV_REST_API_URL=... KV_REST_API_TOKEN=... npm run reset-admin
+//
 // Log in with the printed password; the dashboard then asks for a new strong password.
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const storage = require('../lib/storage');
 
-const STORE_FILE = path.join(__dirname, '..', 'data', 'store.json');
-if (!fs.existsSync(STORE_FILE)) {
-  console.log('No data/store.json yet - just start the server and log in with admin123.');
-  process.exit(0);
-}
+(async () => {
+  const store = await storage.loadData();
+  if (!store) {
+    console.log('No saved store yet - just start the server and log in with admin123.');
+    return;
+  }
+  const temp = `Temp-${crypto.randomBytes(4).toString('hex')}!${crypto.randomInt(10, 99)}`;
+  const salt = crypto.randomBytes(16).toString('hex');
+  store.admin = {
+    ...store.admin,
+    passwordHash: `${salt}:${crypto.scryptSync(temp, salt, 64).toString('hex')}`,
+    mustChangePassword: true,
+    sessionVersion: (store.admin?.sessionVersion || 1) + 1, // logs out every device
+    totp: null,
+    recoveryCodes: [],
+  };
+  await storage.saveData(store);
 
-const store = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-const temp = `Temp-${crypto.randomBytes(4).toString('hex')}!${crypto.randomInt(10, 99)}`;
-const salt = crypto.randomBytes(16).toString('hex');
-store.admin = {
-  ...store.admin,
-  passwordHash: `${salt}:${crypto.scryptSync(temp, salt, 64).toString('hex')}`,
-  mustChangePassword: true,
-  totp: null,
-  recoveryCodes: [],
-};
-const tmp = `${STORE_FILE}.tmp`;
-fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
-fs.renameSync(tmp, STORE_FILE);
-
-console.log('Admin reset done. Google Authenticator is OFF.');
-console.log(`Temporary password: ${temp}`);
-console.log('Start the server (npm start), log in with it, and set a new strong password.');
+  console.log('Admin reset done. Google Authenticator is OFF.');
+  console.log(`Temporary password: ${temp}`);
+  console.log('Log in with it and set a new strong password.');
+})().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

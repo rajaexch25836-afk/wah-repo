@@ -528,7 +528,7 @@
       const receipt = manual && f.receipt.files[0];
       if (receipt) {
         const body = new FormData();
-        body.append('receipt', receipt);
+        body.append('receipt', await shrinkImage(receipt));
         const up = await fetch(`/api/orders/${data.order.id}/receipt?t=${data.accessToken}`, { method: 'POST', body }).catch(() => null);
         if (up?.ok) data.order.manualPayment.hasReceipt = true;
         else toast('Order placed, but the screenshot did not upload. Please send it on WhatsApp.');

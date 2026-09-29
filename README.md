@@ -50,6 +50,11 @@ npm start
 ```
 Yeh ek temporary password dikhata hai aur Google Authenticator band kar deta hai. Us se login karein, naya strong password banayein, aur Security tab se Authenticator dobara on kar lein.
 
+**Vercel wali store ke liye:** Vercel → Settings → Environment Variables se `KV_REST_API_URL` aur `KV_REST_API_TOKEN` copy karein, aur apne computer pe project folder me chalayein:
+```bash
+KV_REST_API_URL=... KV_REST_API_TOKEN=... npm run reset-admin
+```
+
 Pehli dafa chalne pe `data/seed.json` se sample products aur settings `data/store.json` me copy ho jaati hain. Asal data `data/store.json` me aur pictures `public/uploads/` me save hoti hain (dono git me commit nahi hote, taake aapka live data safe rahe — inka backup rakhein).
 
 ## Bank / Easypaisa / JazzCash transfer (manual)
@@ -112,7 +117,27 @@ Sab keys sirf server pe environment variables me rakhein — git me commit na ka
 
 ## Online (live) karna
 
-Yeh Node.js app hai, is liye aisi hosting chahiye jo Node server chala sake aur files disk pe save rakhe, maslan: VPS (DigitalOcean, Hostinger VPS), Railway ya Render (persistent disk ke saath). GitHub Pages pe dashboard nahi chalega kyun ke woh sirf static files dikhata hai.
+### Vercel
+
+Vercel pe files save nahi hoti, is liye wahan data **Upstash Redis** me aur pictures **Vercel Blob** me jaati hain (dono ka free plan hai). Yeh ek dafa set karna hai:
+
+1. Vercel pe project kholein → **Storage** tab.
+2. **Create Database → Upstash (Redis)** chunein, free plan, aur project se **Connect** karein. Is se `KV_REST_API_URL` aur `KV_REST_API_TOKEN` khud add ho jaate hain.
+3. Phir **Create → Blob** chunein aur project se **Connect** karein. Is se `BLOB_READ_WRITE_TOKEN` khud add ho jata hai.
+4. **Settings → Environment Variables** me `PUBLIC_URL` add karein, jaise `https://bichkand-fashion.vercel.app` (login cookie ko https pe mehfooz rakhta hai).
+5. **Deployments** me aakhri deployment ke **⋯ → Redeploy** dabayein.
+
+Phir `https://<aapki-site>.vercel.app/admin` kholein, password `admin123` se login karein aur naya mazboot password rakhein.
+
+Agar yeh setup na ho to website "Store setup is not finished" ka error dikhati hai.
+
+Note: payment screenshots Blob me ek lambe random naam se save hote hain; dashboard unhe login ke baad hi dikhata hai.
+
+### Apna server (VPS, Railway, Render)
+
+Aisi hosting jo Node server chala sake aur files disk pe save rakhe: VPS (DigitalOcean, Hostinger VPS), Railway ya Render (persistent disk ke saath). Wahan kuch setup nahi chahiye — data `data/store.json` aur pictures `public/uploads/` me save hoti hain.
+
+GitHub Pages pe dashboard nahi chalega kyun ke woh sirf static files dikhata hai.
 
 `PORT` environment variable se port badal sakte hain.
 
@@ -121,6 +146,7 @@ Yeh Node.js app hai, is liye aisi hosting chahiye jo Node server chala sake aur 
 | Path | Kaam |
 |------|------|
 | `server.js` | Backend: API, login, picture upload |
+| `lib/storage.js` | Data aur pictures kahan save hon (disk, ya Vercel pe Redis + Blob) |
 | `data/seed.json` | Shuru ka sample data |
 | `public/index.html`, `public/css`, `public/js/app.js` | Customer website |
 | `public/admin/` | Dashboard |
