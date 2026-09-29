@@ -21,6 +21,31 @@
       <button class="btn btn-dark btn-block" type="submit">Log in</button>
       <p class="error" id="loginError"></p>
     </form>
+
+    <!-- Step 2: Google Authenticator code -->
+    <form class="login-card" id="codeForm" hidden>
+      <h1>Verification</h1>
+      <p id="codeHelp">Open <strong>Google Authenticator</strong> on your phone and enter the 6-digit code for this store.</p>
+      <input id="loginCode" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456" maxlength="11" required>
+      <button class="btn btn-dark btn-block" type="submit">Verify</button>
+      <button type="button" class="link-btn" id="useRecovery">Lost your phone? Use a recovery code</button>
+      <button type="button" class="link-btn" id="backToPassword">← Back</button>
+      <p class="error" id="codeError"></p>
+    </form>
+
+    <!-- Must set a strong password -->
+    <form class="login-card login-wide" id="forceForm" hidden>
+      <h1>New password</h1>
+      <p>For safety, set a strong admin password before using the dashboard.</p>
+      <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+      <label>New password <input type="password" name="next" autocomplete="new-password" required data-rules="forceRules"></label>
+      <ul class="pw-rules" id="forceRules"></ul>
+      <label>Type the new password again <input type="password" name="confirm" autocomplete="new-password" required></label>
+      <label class="show-pw"><input type="checkbox" data-show-pw> Show passwords</label>
+      <button class="btn btn-accent btn-block" type="submit">Save new password</button>
+      <button type="button" class="link-btn" data-logout>Log out</button>
+      <p class="error" id="forceError"></p>
+    </form>
   </section>
 
   <!-- Dashboard -->
@@ -33,6 +58,7 @@
         <button class="tab" data-tab="customers">Customers</button>
         <button class="tab" data-tab="payments">Payments</button>
         <button class="tab" data-tab="settings">Store &amp; Social</button>
+        <button class="tab" data-tab="security">Security</button>
       </nav>
       <div class="topbar-actions">
         <a href="/" target="_blank" class="btn btn-ghost btn-sm">View store</a>
@@ -173,13 +199,24 @@
 
           <div class="save-bar"><button class="btn btn-accent" type="submit">Save settings</button></div>
         </form>
+      </section>
 
-        <form id="passwordForm" class="panel">
-          <h2>Change password</h2>
-          <label>Current password <input type="password" name="current" required autocomplete="current-password"></label>
-          <label>New password <input type="password" name="next" required minlength="6" autocomplete="new-password"></label>
-          <button class="btn btn-dark" type="submit">Update password</button>
-        </form>
+      <!-- Security -->
+      <section id="tab-security" hidden>
+        <div class="security">
+          <form id="passwordForm" class="panel">
+            <h2>Change admin password</h2>
+            <p class="hint">Changing the password logs out every other device.</p>
+            <label>Current password <input type="password" name="current" required autocomplete="current-password"></label>
+            <label>New password <input type="password" name="next" required autocomplete="new-password" data-rules="passwordRules"></label>
+            <ul class="pw-rules" id="passwordRules"></ul>
+            <label>Type the new password again <input type="password" name="confirm" required autocomplete="new-password"></label>
+            <label class="show-pw"><input type="checkbox" data-show-pw> Show passwords</label>
+            <button class="btn btn-dark" type="submit">Update password</button>
+          </form>
+
+          <div class="panel" id="twoFactorPanel"></div>
+        </div>
       </section>
     </main>
   </div>
