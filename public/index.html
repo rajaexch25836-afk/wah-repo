@@ -57,11 +57,14 @@
       </div>
     </section>
 
+    <div id="collectionRows"></div>
+
     <section class="shop" id="shop">
       <div class="container">
         <div class="shop-head">
           <h2>Shop the collection</h2>
           <select id="sort" aria-label="Sort products">
+            <option value="featured">Featured</option>
             <option value="new">Newest</option>
             <option value="low">Price: low to high</option>
             <option value="high">Price: high to low</option>
@@ -152,7 +155,12 @@
       </form>
 
       <div class="drawer-foot">
+        <div class="sum-rows" id="sumRows" hidden>
+          <div><span>Subtotal</span><span id="cartSubtotal"></span></div>
+          <div><span>Delivery <small id="deliveryNote"></small></span><span id="cartDelivery"></span></div>
+        </div>
         <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
+        <p class="free-hint" id="freeHint" hidden></p>
         <button class="btn btn-dark btn-block" id="checkoutBtn">Checkout</button>
         <button class="btn btn-accent btn-block" id="placeOrderBtn" type="submit" form="checkoutForm" hidden>Place order</button>
       </div>
@@ -172,6 +180,14 @@
     <div class="modal modal-page" role="dialog" aria-modal="true" aria-labelledby="pageTitle">
       <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
       <article class="page-body" id="pageBody"></article>
+    </div>
+  </div>
+
+  <!-- Offer popup (Dashboard > Pages) -->
+  <div class="overlay" id="popupModal" hidden>
+    <div class="modal modal-popup" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <div id="popupBody"></div>
     </div>
   </div>
 

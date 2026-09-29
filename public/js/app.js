@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, user: null, afterLogin: null, filter: 'all', query: '', sort: 'new', cart: [], step: 'bag' };
+  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -37,6 +37,21 @@
     if (p.featured && !p.soldOut) out.push('<span class="badge hot">Trending</span>');
     return out.length ? `<div class="badges">${out.join('')}</div>` : '';
   }
+
+  // ---------- ratings ----------
+  const productReviews = (id) => state.reviews.filter((r) => r.productId === id);
+  function ratingOf(id) {
+    const list = productReviews(id);
+    return list.length ? { avg: list.reduce((n, r) => n + r.rating, 0) / list.length, count: list.length } : null;
+  }
+  const stars = (value) => {
+    const full = Math.round(value);
+    return `<span class="stars" aria-label="${value.toFixed(1)} out of 5">${'★'.repeat(full)}<span class="off">${'★'.repeat(5 - full)}</span></span>`;
+  };
+  const ratingLine = (id) => {
+    const r = ratingOf(id);
+    return r ? `<div class="rating-line">${stars(r.avg)} <span>${r.avg.toFixed(1)} (${r.count})</span></div>` : '';
+  };
 
   function toast(msg) {
     const t = $('toast');
@@ -195,7 +210,8 @@
   // ---------- product grid ----------
   function renderChips() {
     const cats = state.settings.categories || [];
-    const chips = [['all', 'All'], ['sale', 'On sale'], ...cats.map((c) => [c, c])];
+    const cols = state.collections.filter((c) => c.productIds.length);
+    const chips = [['all', 'All'], ['sale', 'On sale'], ...cols.map((c) => [`col:${c.id}`, c.name]), ...cats.map((c) => [c, c])];
     $('chips').innerHTML = chips
       .map(([value, label]) => `<button class="chip${value === 'sale' ? ' sale' : ''}${state.filter === value ? ' active' : ''}" data-filter="${escapeHtml(value)}">${escapeHtml(label)}</button>`)
       .join('');
@@ -205,11 +221,15 @@
     const q = state.query.toLowerCase();
     let list = state.products.filter((p) => {
       if (state.filter === 'sale' && !p.onSale) return false;
-      if (!['all', 'sale'].includes(state.filter) && p.category !== state.filter) return false;
+      if (state.filter.startsWith('col:')) {
+        if (!state.collections.find((c) => `col:${c.id}` === state.filter)?.productIds.includes(p.id)) return false;
+      } else if (!['all', 'sale'].includes(state.filter) && p.category !== state.filter) return false;
       if (q && !`${p.name} ${p.category} ${p.description} ${(p.colors || []).join(' ')}`.toLowerCase().includes(q)) return false;
       return true;
     });
+    const order = new Map(state.products.map((p, i) => [p.id, i]));
     const sorters = {
+      featured: (a, b) => order.get(a.id) - order.get(b.id), // the order set in the dashboard
       new: (a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''),
       low: (a, b) => finalPrice(a) - finalPrice(b),
       high: (a, b) => finalPrice(b) - finalPrice(a),
@@ -223,18 +243,39 @@
   function renderGrid() {
     const list = visibleProducts();
     $('empty').hidden = list.length > 0;
-    $('grid').innerHTML = list
-      .map(
-        (p) => `
+    $('grid').innerHTML = list.map(cardHtml).join('');
+  }
+
+  const cardHtml = (p) => `
         <button class="card${p.soldOut ? ' sold' : ''}" data-id="${escapeHtml(p.id)}">
           <div class="card-media">${media(p)}${badges(p)}<span class="card-quick">${p.soldOut ? 'Sold out' : 'Quick view'}</span></div>
           <div class="card-info">
             <div class="card-cat">${escapeHtml(p.category)}</div>
             <div class="card-name">${escapeHtml(p.name)}</div>
             ${priceHtml(p)}
+            ${ratingLine(p.id)}
           </div>
-        </button>`
-      )
+        </button>`;
+
+  // Collections marked "show on home page" get their own row above the shop
+  function renderCollections() {
+    const byId = new Map(state.products.map((p) => [p.id, p]));
+    $('collectionRows').innerHTML = state.collections
+      .filter((c) => c.showOnHome)
+      .map((c) => {
+        const items = c.productIds.map((id) => byId.get(id)).filter(Boolean).sort((a, b) => Number(a.soldOut) - Number(b.soldOut));
+        if (!items.length) return '';
+        return `
+        <section class="collection">
+          <div class="container">
+            <div class="shop-head">
+              <div><h2>${escapeHtml(c.name)}</h2>${c.description ? `<p class="collection-desc">${escapeHtml(c.description)}</p>` : ''}</div>
+              <button class="btn btn-ghost btn-sm-store" data-view-collection="${escapeHtml(c.id)}">View all</button>
+            </div>
+            <div class="collection-row">${items.slice(0, 12).map(cardHtml).join('')}</div>
+          </div>
+        </section>`;
+      })
       .join('');
   }
 
@@ -266,6 +307,7 @@
       <div class="detail">
         <div class="card-cat">${escapeHtml(p.category)}</div>
         <h2>${escapeHtml(p.name)}</h2>
+        ${ratingLine(p.id)}
         ${priceHtml(p)}
         ${p.soldOut ? '<span class="badge sold" style="align-self:flex-start">Sold out</span>' : hasDiscount(p) ? `<span class="badge" style="align-self:flex-start">Save ${discount(p)}%</span>` : ''}
         ${p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : ''}
@@ -278,6 +320,7 @@
             ? state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="askBtn"><span class="icon">${ICONS.whatsapp}</span> Ask when it’s back</button>` : ''
             : '<button class="btn btn-accent btn-block" id="buyNowBtn">Buy now</button>'}
         </div>
+        ${reviewsHtml(p)}
       </div>`;
 
     const body = $('productBody');
@@ -307,11 +350,66 @@
         closeOverlay($('productModal'));
         openCart('details');
       }
+      if (e.target.closest('#writeReviewBtn')) {
+        body.querySelector('#reviewForm').hidden = false;
+        e.target.closest('#writeReviewBtn').hidden = true;
+      }
       if (e.target.closest('#askBtn')) {
         window.open(whatsappLink(`Hi! Is "${p.name}" coming back in stock?`), '_blank', 'noopener');
       }
     };
+    body.onsubmit = async (e) => {
+      if (e.target.id !== 'reviewForm') return;
+      e.preventDefault();
+      const f = e.target;
+      const errorEl = f.querySelector('[data-error]');
+      errorEl.textContent = '';
+      if (!f.rating.value) {
+        errorEl.textContent = 'Please choose 1 to 5 stars';
+        return;
+      }
+      f.querySelector('[type=submit]').disabled = true;
+      try {
+        await jsonFetch('/api/reviews', { productId: p.id, rating: Number(f.rating.value), name: f.name.value, text: f.text.value });
+        f.outerHTML = '<p class="review-thanks">Thank you! Your review will show here after we check it.</p>';
+      } catch (err) {
+        errorEl.textContent = err.message;
+        f.querySelector('[type=submit]').disabled = false;
+      }
+    };
     openOverlay($('productModal'));
+  }
+
+  function reviewsHtml(p) {
+    const list = productReviews(p.id);
+    const r = ratingOf(p.id);
+    const u = state.user;
+    return `
+      <section class="reviews">
+        <h3>Reviews ${r ? `<span class="rating-line">${stars(r.avg)} ${r.avg.toFixed(1)} · ${r.count}</span>` : ''}</h3>
+        ${list.length ? '' : '<p class="acc-note">No reviews yet. Be the first!</p>'}
+        ${list
+          .slice(0, 20)
+          .map(
+            (rv) => `
+          <div class="review">
+            <div class="review-top">${stars(rv.rating)} <strong>${escapeHtml(rv.name)}</strong>${rv.verified ? '<span class="verified">✓ Verified buyer</span>' : ''}</div>
+            <p>${escapeHtml(rv.text)}</p>
+            <span class="review-date">${new Date(rv.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}</span>
+          </div>`
+          )
+          .join('')}
+        <button type="button" class="btn btn-ghost btn-block" id="writeReviewBtn">Write a review</button>
+        <form class="form-stack review-form" id="reviewForm" hidden novalidate>
+          <div class="star-input" role="radiogroup" aria-label="Your rating">
+            ${[5, 4, 3, 2, 1].map((n) => `<input type="radio" name="rating" value="${n}" id="star${n}"><label for="star${n}" title="${n} stars">★</label>`).join('')}
+          </div>
+          ${field('Your name', 'name', 'maxlength="60" required', u ? `${u.firstName} ${u.lastName}` : '')}
+          <label>Your review <textarea name="text" rows="3" maxlength="1000" required></textarea></label>
+          <p class="form-error" data-error></p>
+          <button class="btn btn-dark btn-block" type="submit">Send review</button>
+        </form>
+      </section>`;
   }
 
   // ---------- cart ----------
@@ -347,9 +445,8 @@
   function renderCart() {
     const lines = cartLines();
     const count = lines.reduce((n, l) => n + l.qty, 0);
-    const total = lines.reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
     $('cartCount').textContent = count;
-    $('cartTotal').textContent = money(total);
+    renderTotals();
     $('checkoutBtn').disabled = !lines.length;
     if (!lines.length && state.step === 'details') setStep('bag');
     $('cartItems').innerHTML = lines.length
@@ -386,11 +483,38 @@
     if (details) {
       checkoutForm.scrollTop = 0;
       renderLoginHint();
-      $('manualAmount').textContent = money(cartTotal());
     }
+    renderTotals();
   }
 
-  const cartTotal = () => cartLines().reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
+  const cartSubtotal = () => cartLines().reduce((n, l) => n + l.qty * finalPrice(l.product), 0);
+
+  // Same rule as the server: free above a set amount, else the city's charge, else the normal charge
+  function deliveryFee(city, subtotal) {
+    const d = state.delivery;
+    if (d.freeAbove > 0 && subtotal >= d.freeAbove) return 0;
+    const match = (d.cityFees || []).find((c) => c.city.toLowerCase() === String(city || '').trim().toLowerCase());
+    return match ? match.fee : d.fee;
+  }
+
+  const cartTotal = () => cartSubtotal() + deliveryFee(checkoutForm.city.value, cartSubtotal());
+
+  function renderTotals() {
+    const subtotal = cartSubtotal();
+    const d = state.delivery;
+    const hasDelivery = d.fee > 0 || (d.cityFees || []).some((c) => c.fee > 0);
+    const fee = deliveryFee(checkoutForm.city.value, subtotal);
+    const details = state.step === 'details';
+    $('sumRows').hidden = !hasDelivery || !subtotal;
+    $('cartSubtotal').textContent = money(subtotal);
+    $('cartDelivery').textContent = fee ? money(fee) : 'Free';
+    $('deliveryNote').textContent = !details && fee && (d.cityFees || []).length ? '(depends on city)' : '';
+    $('cartTotal').textContent = money(subtotal + fee);
+    const left = d.freeAbove - subtotal;
+    $('freeHint').hidden = !(hasDelivery && d.freeAbove > 0 && subtotal && left > 0);
+    $('freeHint').textContent = `Add ${money(left)} more for free delivery`;
+    $('manualAmount').textContent = money(subtotal + fee);
+  }
 
   function renderLoginHint() {
     const { requireLogin, allowRegistration } = state.accounts;
@@ -587,6 +711,7 @@
           : `Your order <strong>#${order.number}</strong> has been placed. We will call you to confirm it.`}</p>
       <div class="order-summary">
         ${order.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${i.size ? ` (${escapeHtml(i.size)})` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
+        ${order.deliveryFee ? `<div><span>Delivery</span><span>${money(order.deliveryFee)}</span></div>` : ''}
         <div class="sum-total"><span>Total</span><span>${money(order.total)}</span></div>
         <div><span>Payment</span><span>${payText}</span></div>
       </div>
@@ -962,6 +1087,38 @@
     btn.disabled = false;
   });
 
+  // ---------- offer popup ----------
+  function maybeShowPopup() {
+    const p = state.content.popup;
+    if (!p?.enabled || !(p.title || p.text || p.image)) return;
+    const key = `popup:${[p.title, p.text, p.image].join('|')}:${new Date().toDateString()}`;
+    try {
+      if (localStorage.getItem('popupSeen') === key) return;
+      localStorage.setItem('popupSeen', key);
+    } catch {}
+    const external = /^https?:/.test(p.buttonLink || '');
+    $('popupBody').innerHTML = `
+      ${p.image ? `<img class="popup-img" src="${escapeHtml(p.image)}" alt="">` : ''}
+      <div class="popup-text">
+        ${p.title ? `<h2 id="popupTitle">${escapeHtml(p.title)}</h2>` : ''}
+        ${p.text ? `<p>${escapeHtml(p.text)}</p>` : ''}
+        ${p.buttonText ? `<a class="btn btn-accent btn-block" id="popupBtn" href="${escapeHtml(p.buttonLink || '#shop')}"${external ? ' target="_blank" rel="noopener"' : ''}>${escapeHtml(p.buttonText)}</a>` : ''}
+      </div>`;
+    setTimeout(() => {
+      if (!document.querySelector('.overlay:not([hidden])')) openOverlay($('popupModal'));
+    }, 1200);
+  }
+  $('popupBody').addEventListener('click', (e) => {
+    const btn = e.target.closest('#popupBtn');
+    if (!btn) return;
+    closeOverlay($('popupModal'));
+    const link = btn.getAttribute('href');
+    if (link === '#shop') {
+      e.preventDefault();
+      $('shop').scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+
   // ---------- overlays ----------
   function openOverlay(el) {
     el.hidden = false;
@@ -1007,6 +1164,18 @@
     const card = e.target.closest('.card');
     if (card) openProduct(card.dataset.id);
   });
+  $('collectionRows').addEventListener('click', (e) => {
+    const view = e.target.closest('[data-view-collection]');
+    if (view) {
+      state.filter = `col:${view.dataset.viewCollection}`;
+      renderChips();
+      renderGrid();
+      $('shop').scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    const card = e.target.closest('.card');
+    if (card) openProduct(card.dataset.id);
+  });
   $('cartBtn').addEventListener('click', () => openCart());
   $('cartItems').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-remove]');
@@ -1036,6 +1205,7 @@
   checkoutForm.addEventListener('input', (e) => {
     e.target.classList.remove('invalid');
     $('checkoutError').textContent = '';
+    if (e.target.name === 'city') renderTotals();
   });
 
   // ---------- boot ----------
@@ -1047,12 +1217,16 @@
       state.payments = data.payments || {};
       state.accounts = data.accounts || {};
       state.content = data.content || state.content;
+      state.delivery = data.delivery || state.delivery;
+      state.collections = data.collections || [];
+      state.reviews = data.reviews || [];
       loadCart();
       prefillCustomer();
       renderPayOptions();
       renderSettings();
       renderFooter();
       renderSlider();
+      renderCollections();
       renderChips();
       renderGrid();
       renderCart();
@@ -1065,6 +1239,7 @@
           fillCheckoutFromUser();
           handleReturn();
           openPageFromHash();
+          maybeShowPopup();
         });
     })
     .catch(() => {
