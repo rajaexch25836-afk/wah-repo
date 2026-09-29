@@ -90,6 +90,16 @@
         <p id="footerTagline"></p>
       </div>
       <div>
+        <h3>Information</h3>
+        <nav class="footer-links" id="footerLinks" aria-label="Store information"></nav>
+      </div>
+      <div id="footerLocation" hidden>
+        <h3>Visit our shop</h3>
+        <p class="footer-address" id="footerAddress"></p>
+        <div class="footer-map" id="footerMap"></div>
+        <a class="map-link" id="footerMapLink" target="_blank" rel="noopener">Open in Google Maps →</a>
+      </div>
+      <div>
         <h3>Follow &amp; contact us</h3>
         <div class="footer-social" id="footerSocial"></div>
       </div>
@@ -154,6 +164,14 @@
     <div class="modal modal-sm" role="dialog" aria-modal="true" aria-label="Account">
       <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
       <div class="account-body" id="accountBody"></div>
+    </div>
+  </div>
+
+  <!-- About us, policies, Earn with us, size guide, order tracking -->
+  <div class="overlay" id="pageModal" hidden>
+    <div class="modal modal-page" role="dialog" aria-modal="true" aria-labelledby="pageTitle">
+      <button class="modal-close" data-close aria-label="Close"><span class="icon" data-icon="close"></span></button>
+      <article class="page-body" id="pageBody"></article>
     </div>
   </div>
 

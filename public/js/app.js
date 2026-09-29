@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, products: [], payments: {}, accounts: {}, user: null, afterLogin: null, filter: 'all', query: '', sort: 'new', cart: [], step: 'bag' };
+  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, user: null, afterLogin: null, filter: 'all', query: '', sort: 'new', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -243,10 +243,15 @@
     const p = state.products.find((x) => x.id === id);
     if (!p) return;
     const pick = { size: p.sizes?.[0] || '', color: p.colors?.[0] || '', qty: 1 };
-    const optGroup = (label, key, values) =>
+    const guide = state.content.sizeGuide || {};
+    const guideLink = guide.text || guide.image ? '<button type="button" class="guide-link" data-page="size-guide">📏 Size guide</button>' : '';
+    const optGroup = (label, key, values, extra = '') =>
       values?.length
-        ? `<div><div class="opt-label">${label}</div><div class="opts">${values
-            .map((v, i) => `<button class="opt${i === 0 ? ' active' : ''}" data-opt="${key}" data-value="${escapeHtml(v)}">${escapeHtml(v)}</button>`)
+        ? `<div><div class="opt-label">${label}${extra}</div><div class="opts">${values
+            .map((v, i) => {
+              const swatch = key === 'color' ? colorSwatch(v) : '';
+              return `<button class="opt${i === 0 ? ' active' : ''}" data-opt="${key}" data-value="${escapeHtml(v)}">${swatch ? `<span class="swatch" style="background:${swatch}"></span>` : ''}${escapeHtml(v)}</button>`;
+            })
             .join('')}</div></div>`
         : '';
     const thumbs = (p.images || []).length > 1
@@ -264,7 +269,7 @@
         ${priceHtml(p)}
         ${p.soldOut ? '<span class="badge sold" style="align-self:flex-start">Sold out</span>' : hasDiscount(p) ? `<span class="badge" style="align-self:flex-start">Save ${discount(p)}%</span>` : ''}
         ${p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : ''}
-        ${optGroup('Size', 'size', p.sizes)}
+        ${optGroup('Size', 'size', p.sizes, guideLink)}
         ${optGroup('Colour', 'color', p.colors)}
         ${p.soldOut ? '' : `<div><div class="opt-label">Quantity</div><div class="qty"><button data-qty="-1" aria-label="Less">−</button><span id="qtyVal">1</span><button data-qty="1" aria-label="More">+</button></div></div>`}
         <div class="detail-actions">
@@ -613,7 +618,24 @@
   }
 
   // ---------- customer account ----------
-  const ORDER_STATUS_LABELS = { new: 'Placed', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled' };
+  const ORDER_STATUS_LABELS = {
+    new: 'Order placed', confirmed: 'Order confirmed', packing: 'Order packing', ready: 'Ready to deliver', picked: 'Order picked',
+    shipped: 'On the way', delivered: 'Delivered', returned: 'Returned', rejected: 'Rejected', cancelled: 'Cancelled',
+  };
+  const TRACK_STEPS = ['new', 'confirmed', 'packing', 'ready', 'picked', 'shipped', 'delivered'];
+  const shortDate = (iso) => new Date(iso).toLocaleString('en-PK', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+
+  // Step-by-step progress the customer sees for an order
+  function orderTracker(o) {
+    if (!TRACK_STEPS.includes(o.status)) return `<div class="tracker-stopped">${ORDER_STATUS_LABELS[o.status] || escapeHtml(o.status)}</div>`;
+    const current = TRACK_STEPS.indexOf(o.status);
+    const when = {};
+    (o.statusHistory || []).forEach((h) => (when[h.status] = h.at));
+    return `<ol class="tracker">${TRACK_STEPS.map((st, i) => `
+      <li class="${i < current ? 'done' : i === current ? 'current' : ''}">
+        <span class="dot"></span><span class="t-label">${ORDER_STATUS_LABELS[st]}</span>${i <= current && when[st] ? `<span class="t-date">${shortDate(when[st])}</span>` : ''}
+      </li>`).join('')}</ol>`;
+  }
 
   async function jsonFetch(url, body, method = 'POST') {
     const res = await fetch(url, {
@@ -695,6 +717,7 @@
             <button type="button" class="btn btn-dark" data-account="edit">Edit profile</button>
             <button type="button" class="btn btn-ghost" data-account="password">Change password</button>
           </div>
+          <button type="button" class="btn btn-accent btn-block" data-page="earn">💰 ${escapeHtml(state.content.pages.earn?.title || 'Earn with us')}</button>
           <button type="button" class="btn btn-ghost btn-block logout-btn" data-logout>Log out</button>`;
       }
       openOverlay($('accountModal'));
@@ -737,6 +760,7 @@
             <div class="top"><span>#${o.number}</span><span>${money(o.total)}</span></div>
             <div class="meta">${new Date(o.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${o.items.reduce((n, i) => n + i.qty, 0)} item(s)</div>
             <div><span class="status-pill">${ORDER_STATUS_LABELS[o.status] || o.status}</span> <span class="meta">${paymentText(o)}</span></div>
+            ${orderTracker(o)}
           </div>`
           )
           .join('')
@@ -816,6 +840,128 @@
     }
   });
 
+  // ---------- pages: About us, policies, Earn with us, size guide, order tracking ----------
+  const FOOTER_PAGES = ['about', 'shipping', 'returns', 'terms', 'earn'];
+
+  function renderFooter() {
+    const pages = state.content.pages || {};
+    $('footerLinks').innerHTML = [
+      ...FOOTER_PAGES.map((key) => `<a href="#${key}" data-page="${key}">${escapeHtml(pages[key]?.title || key)}</a>`),
+      '<a href="#track" data-page="track">Track your order</a>',
+    ].join('');
+
+    const loc = state.content.location || {};
+    $('footerLocation').hidden = !loc.address && !loc.mapLink;
+    $('footerAddress').textContent = loc.address || '';
+    const mapsUrl = loc.mapLink || (loc.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.address)}` : '');
+    $('footerMapLink').href = mapsUrl;
+    $('footerMapLink').hidden = !mapsUrl;
+    $('footerMap').innerHTML =
+      loc.showMap && loc.address
+        ? `<iframe title="Shop location on the map" src="https://maps.google.com/maps?q=${encodeURIComponent(loc.address)}&z=15&output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`
+        : '';
+  }
+
+  const pageImage = (src, alt) => (src ? `<img class="page-img" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">` : '');
+
+  function openPage(key) {
+    const body = $('pageBody');
+    const pages = state.content.pages || {};
+    if (key === 'size-guide') {
+      const g = state.content.sizeGuide || {};
+      body.innerHTML = `<h2 id="pageTitle">Size guide</h2>${pageImage(g.image, 'Size guide')}<div class="rich">${richText(g.text)}</div>`;
+    } else if (key === 'track') {
+      body.innerHTML = `
+        <h2 id="pageTitle">Track your order</h2>
+        <p>Enter your order number and the mobile number you used for the order.</p>
+        <form class="form-stack" data-page-form="track" novalidate>
+          <div class="field-row">
+            <label>Order number <input name="number" inputmode="numeric" placeholder="1001" required></label>
+            <label>Mobile number <input name="phone" type="tel" inputmode="tel" placeholder="03001234567" required></label>
+          </div>
+          <p class="form-error" data-error></p>
+          <button class="btn btn-dark btn-block" type="submit">Track order</button>
+        </form>
+        <div class="track-result" id="trackResult"></div>`;
+    } else if (pages[key]) {
+      const p = pages[key];
+      const u = state.user || {};
+      body.innerHTML = `<h2 id="pageTitle">${escapeHtml(p.title)}</h2>${pageImage(p.image, p.title)}<div class="rich">${richText(p.text)}</div>${
+        key === 'earn'
+          ? `<form class="form-stack earn-form" data-page-form="earn" novalidate>
+              <div class="field-row">
+                ${field('Name', 'name', 'maxlength="80" autocomplete="name" required', [u.firstName, u.lastName].filter(Boolean).join(' '))}
+                ${field('City', 'city', 'maxlength="60" autocomplete="address-level2" required', u.city)}
+              </div>
+              ${field('Email', 'email', 'type="email" maxlength="120" autocomplete="email" required', u.email)}
+              ${field('Mobile number', 'phone', 'type="tel" maxlength="20" autocomplete="tel" placeholder="03001234567" required', u.phone)}
+              <label>Message <small>(optional)</small> <textarea name="message" rows="2" maxlength="500"></textarea></label>
+              <p class="form-error" data-error></p>
+              <button class="btn btn-accent btn-block" type="submit">Send</button>
+            </form>`
+          : ''
+      }`;
+    } else {
+      return;
+    }
+    closeOverlay($('accountModal'));
+    openOverlay($('pageModal'));
+    $('pageModal').querySelector('.modal').scrollTop = 0;
+    if (location.hash !== `#${key}`) history.replaceState(null, '', `#${key}`);
+  }
+
+  function openPageFromHash() {
+    const key = decodeURIComponent(location.hash.slice(1));
+    if (key && (FOOTER_PAGES.includes(key) || key === 'track' || key === 'size-guide')) openPage(key);
+  }
+
+  // Any [data-page] button or link opens that page (footer, size guide, account panel)
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('[data-page]');
+    if (!link) return;
+    e.preventDefault();
+    openPage(link.dataset.page);
+  });
+  window.addEventListener('hashchange', openPageFromHash);
+
+  $('pageBody').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = Object.fromEntries(new FormData(form));
+    const errorEl = form.querySelector('[data-error]');
+    const btn = form.querySelector('[type=submit]');
+    errorEl.textContent = '';
+    btn.disabled = true;
+    try {
+      if (form.dataset.pageForm === 'track') {
+        const order = await jsonFetch('/api/orders/track', data);
+        $('trackResult').innerHTML = `
+          <div class="my-order">
+            <div class="top"><span>#${order.number}</span><span>${money(order.total)}</span></div>
+            <div class="meta">${new Date(order.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${order.items.map((i) => `${i.qty} × ${escapeHtml(i.name)}`).join(', ')}</div>
+            <div><span class="status-pill">${ORDER_STATUS_LABELS[order.status] || order.status}</span> <span class="meta">${paymentText(order)}</span></div>
+            ${orderTracker(order)}
+          </div>`;
+      } else if (form.dataset.pageForm === 'earn') {
+        await jsonFetch('/api/earn', data);
+        const lines = [`Hi ${state.settings.storeName}! I want to earn with you.`, '', `Name: ${data.name}`, `City: ${data.city}`, `Email: ${data.email}`, `Mobile: ${data.phone}`];
+        if (data.message) lines.push(`Message: ${data.message}`);
+        const text = lines.join('\n');
+        const wa = whatsappLink(text);
+        form.outerHTML = `
+          <div class="earn-done">
+            <div class="check">✓</div>
+            <p><strong>Thank you, ${escapeHtml(data.name)}!</strong> Your details have been sent. We will contact you soon.</p>
+            ${wa ? `<a class="btn btn-wa btn-block" href="${escapeHtml(wa)}" target="_blank" rel="noopener"><span class="icon">${ICONS.whatsapp}</span> Also send on WhatsApp</a>` : ''}
+          </div>`;
+        return;
+      }
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+    btn.disabled = false;
+  });
+
   // ---------- overlays ----------
   function openOverlay(el) {
     el.hidden = false;
@@ -823,7 +969,8 @@
   }
   function closeOverlay(el) {
     el.hidden = true;
-    document.body.style.overflow = '';
+    if (!document.querySelector('.overlay:not([hidden])')) document.body.style.overflow = '';
+    if (el.id === 'pageModal' && location.hash) history.replaceState(null, '', location.pathname + location.search);
   }
   document.querySelectorAll('.overlay').forEach((overlay) => {
     overlay.addEventListener('click', (e) => {
@@ -899,10 +1046,12 @@
       state.products = data.products;
       state.payments = data.payments || {};
       state.accounts = data.accounts || {};
+      state.content = data.content || state.content;
       loadCart();
       prefillCustomer();
       renderPayOptions();
       renderSettings();
+      renderFooter();
       renderSlider();
       renderChips();
       renderGrid();
@@ -915,6 +1064,7 @@
           updateAccountUI();
           fillCheckoutFromUser();
           handleReturn();
+          openPageFromHash();
         });
     })
     .catch(() => {

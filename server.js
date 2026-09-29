@@ -4,6 +4,7 @@ const QRCode = require('qrcode');
 const crypto = require('crypto');
 const path = require('path');
 const storage = require('./lib/storage');
+const { withContentDefaults, sanitizeContent, contentImages } = require('./lib/content');
 const SEED = require('./data/seed.json');
 
 const PORT = process.env.PORT || 3000;
@@ -82,6 +83,8 @@ function withDefaults(data) {
   data.secret ||= crypto.randomBytes(32).toString('hex'); // signs customer login cookies
   data.accountSettings = { allowRegistration: true, requireLogin: false, ...data.accountSettings };
   data.paymentSettings = { cod: true, manualAccounts: [], ...data.paymentSettings };
+  data.content = withContentDefaults(data.content);
+  data.applications ||= []; // "Earn with us" form
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -136,7 +139,7 @@ function sanitizeProduct(input, existing = {}) {
     soldOut: Boolean(input.soldOut),
     featured: Boolean(input.featured),
     sizes: list(input.sizes),
-    colors: list(input.colors),
+    colors: list(input.colors, 60),
     images,
     updatedAt: new Date().toISOString(),
   };
@@ -251,7 +254,14 @@ function loginFailed(key) {
 
 const finalPrice = (p) => (p.onSale && p.salePrice != null && p.salePrice < p.price ? p.salePrice : p.price);
 
-const ORDER_STATUSES = ['new', 'confirmed', 'shipped', 'delivered', 'returned', 'rejected', 'cancelled'];
+// The customer sees each step with its date (statusHistory).
+const ORDER_STATUSES = ['new', 'confirmed', 'packing', 'ready', 'picked', 'shipped', 'delivered', 'returned', 'rejected', 'cancelled'];
+
+function setOrderStatus(order, status) {
+  if (order.status === status) return;
+  order.status = status;
+  order.statusHistory = [...(order.statusHistory || []), { status, at: new Date().toISOString() }];
+}
 // Orders in these states do not count towards sales
 const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
 const PAYMENT_STATUSES = ['unpaid', 'pending', 'paid', 'failed'];
@@ -318,6 +328,7 @@ function publicOrder(o) {
       ? { typeLabel: MANUAL_TYPES[o.manualPayment.type], name: o.manualPayment.name, reference: o.manualPayment.reference, hasReceipt: Boolean(o.manualPayment.receipt) }
       : undefined,
     status: o.status,
+    statusHistory: o.statusHistory || [{ status: 'new', at: o.createdAt }],
   };
 }
 
@@ -427,7 +438,11 @@ function sanitizeSlides(input) {
 }
 
 function isImageInUse(src) {
-  return store.products.some((p) => p.images?.includes(src)) || (store.settings.slides || []).some((s) => s.image === src);
+  return (
+    store.products.some((p) => p.images?.includes(src)) ||
+    (store.settings.slides || []).some((s) => s.image === src) ||
+    contentImages(store.content).includes(src)
+  );
 }
 
 function removeUpload(src) {
@@ -684,6 +699,7 @@ app.get('/api/store', (req, res) => {
     products: store.products,
     payments: { ...paymentMethods(), manualAccounts: activeManualAccounts() },
     accounts: store.accountSettings,
+    content: store.content,
   });
 });
 
@@ -796,6 +812,7 @@ app.post('/api/orders', async (req, res, next) => {
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'unpaid' : 'pending',
       status: 'new',
+      statusHistory: [{ status: 'new', at: new Date().toISOString() }],
     };
     if (manualPayment) order.manualPayment = manualPayment;
     if (user) {
@@ -892,7 +909,7 @@ app.all('/api/payments/safepay/cancel/:id/:token', (req, res) => {
   const order = findOrderForPayment(req);
   if (order && order.paymentStatus === 'pending') {
     order.paymentStatus = 'failed';
-    order.status = 'cancelled';
+    setOrderStatus(order, 'cancelled');
     save();
   }
   res.redirect(303, '/?payment=cancelled');
@@ -1110,7 +1127,7 @@ app.all('/api/payments/easypaisa/status/:id/:token', express.urlencoded({ extend
   }
   if (reported && reported !== '0000' && order.paymentStatus === 'pending') {
     order.paymentStatus = 'failed';
-    order.status = 'cancelled';
+    setOrderStatus(order, 'cancelled');
     save();
     return res.redirect(303, '/?payment=cancelled');
   }
@@ -1143,7 +1160,7 @@ app.post('/api/admin/orders/:id/check-payment', requireAdmin, async (req, res) =
 app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
   const order = store.orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
-  if (ORDER_STATUSES.includes(req.body.status)) order.status = req.body.status;
+  if (ORDER_STATUSES.includes(req.body.status)) setOrderStatus(order, req.body.status);
   if (PAYMENT_STATUSES.includes(req.body.paymentStatus)) order.paymentStatus = req.body.paymentStatus;
   order.updatedAt = new Date().toISOString();
   save();
@@ -1163,6 +1180,82 @@ app.get('/api/admin/receipts/:file', requireAdmin, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Order tracking for customers without an account: order number + the phone used on the order
+app.post('/api/orders/track', (req, res) => {
+  const number = Number(String(req.body.number || '').replace(/\D/g, ''));
+  const phone = str(req.body.phone, 20);
+  const key = `track:${req.ip}`;
+  if (loginBlocked(key)) return res.status(429).json({ error: 'Too many tries. Please wait 15 minutes.' });
+  const order = store.orders.find((o) => o.number === number);
+  if (!order || phoneKey(phone).length < 10 || phoneKey(order.customer.phone) !== phoneKey(phone)) {
+    loginFailed(key);
+    return res.status(404).json({ error: 'No order found with this order number and mobile number' });
+  }
+  res.json(publicOrder(order));
+});
+
+// "Earn with us" form. The customer also sends it to the owner's WhatsApp from the page.
+const recentApplications = new Map(); // ip -> times, max 5 per hour
+app.post('/api/earn', (req, res) => {
+  const now = Date.now();
+  const times = (recentApplications.get(req.ip) || []).filter((t) => t > now - 3600 * 1000);
+  if (times.length >= 5) return res.status(429).json({ error: 'Too many forms sent. Please try again later.' });
+  const a = {
+    name: str(req.body.name, 80),
+    city: str(req.body.city, 60),
+    email: str(req.body.email, 120).toLowerCase(),
+    phone: str(req.body.phone, 20).replace(/[^\d+]/g, ''),
+    message: str(req.body.message, 500),
+  };
+  if (a.name.length < 2) return res.status(400).json({ error: 'Please enter your name' });
+  if (!a.city) return res.status(400).json({ error: 'Please enter your city' });
+  if (!EMAIL_RE.test(a.email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  const digits = a.phone.replace(/\D/g, '').length;
+  if (digits < 10 || digits > 15) return res.status(400).json({ error: 'Please enter a valid mobile number' });
+  recentApplications.set(req.ip, [...times, now]);
+  const user = currentUser(req);
+  store.applications.unshift({
+    id: crypto.randomBytes(8).toString('hex'),
+    ...a,
+    userId: user?.id,
+    status: 'new',
+    createdAt: new Date().toISOString(),
+  });
+  store.applications.length = Math.min(store.applications.length, 2000);
+  save();
+  res.json({ ok: true });
+});
+
+// Admin: pages, size guide and location
+app.put('/api/admin/content', requireAdmin, (req, res) => {
+  const old = contentImages(store.content);
+  store.content = sanitizeContent(req.body, { str, safeUrl, isUploadUrl: storage.isUploadUrl });
+  old.filter((src) => !isImageInUse(src)).forEach(removeUpload);
+  save();
+  res.json(store.content);
+});
+
+// Admin: "Earn with us" forms
+const APPLICATION_STATUSES = ['new', 'contacted', 'approved', 'rejected'];
+
+app.get('/api/admin/applications', requireAdmin, (req, res) => res.json(store.applications));
+
+app.patch('/api/admin/applications/:id', requireAdmin, (req, res) => {
+  const a = store.applications.find((x) => x.id === req.params.id);
+  if (!a) return res.status(404).json({ error: 'Form not found' });
+  if (APPLICATION_STATUSES.includes(req.body.status)) a.status = req.body.status;
+  save();
+  res.json(a);
+});
+
+app.delete('/api/admin/applications/:id', requireAdmin, (req, res) => {
+  const idx = store.applications.findIndex((x) => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Form not found' });
+  store.applications.splice(idx, 1);
+  save();
+  res.json({ ok: true });
 });
 
 // Admin: customers

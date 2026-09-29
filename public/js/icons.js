@@ -60,3 +60,42 @@ window.shrinkImage = (file, maxSize = 1600) =>
     };
     img.src = url;
   });
+
+// Ready-made colours for the product editor; the store shows a small swatch next to these names.
+window.COLOR_SWATCHES = {
+  Black: '#111111', White: '#ffffff', 'Off White': '#f4f0e6', Cream: '#f3e5c8', Beige: '#d9c3a0', Skin: '#e8c4a8',
+  Brown: '#7a4b2a', Camel: '#b98a55', Mustard: '#d4a017', Yellow: '#f2d23c', Orange: '#e87a2c', Rust: '#b7472a',
+  Red: '#c62828', Maroon: '#6d1a2a', 'Tea Pink': '#e8b4b8', Pink: '#e86a9a', Magenta: '#c2185b', Purple: '#6a3d9a',
+  Lilac: '#b9a3d6', Navy: '#1f2a52', Blue: '#2f6fd1', 'Sky Blue': '#8cc7ee', 'Ferozi': '#1fb5ad', Teal: '#12706e',
+  Green: '#2e7d32', 'Bottle Green': '#0f4d3a', Mint: '#a8dcc3', Olive: '#6b7a3a', Grey: '#8c8c8c', Charcoal: '#3a3a3a',
+  Silver: '#c7c9cc', Gold: '#c9a227', Peach: '#f6b99a', 'Multi Colour': 'conic-gradient(#e53935,#fdd835,#43a047,#1e88e5,#8e24aa,#e53935)',
+};
+
+// CSS background for a colour name (case does not matter), or '' if it is not a known colour.
+window.colorSwatch = (name) => {
+  const key = Object.keys(window.COLOR_SWATCHES).find((k) => k.toLowerCase() === String(name).trim().toLowerCase());
+  return key ? window.COLOR_SWATCHES[key] : '';
+};
+
+// Turns the owner's page text into safe HTML: paragraphs, line breaks, "•"/"-" bullet lines,
+// and "a | b | c" lines as a table (used by the size guide).
+window.richText = (text) => {
+  const blocks = String(text || '').replace(/\r/g, '').split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const lines = block.split('\n').filter((l) => l.trim());
+      if (!lines.length) return '';
+      if (lines.every((l) => l.includes('|'))) {
+        const rows = lines.map((l) => l.split('|').map((c) => escapeHtml(c.trim())));
+        return `<div class="table-wrap"><table><thead><tr>${rows[0].map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows
+          .slice(1)
+          .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
+          .join('')}</tbody></table></div>`;
+      }
+      if (lines.every((l) => /^\s*[•\-*]\s+/.test(l))) {
+        return `<ul>${lines.map((l) => `<li>${escapeHtml(l.replace(/^\s*[•\-*]\s+/, ''))}</li>`).join('')}</ul>`;
+      }
+      return `<p>${lines.map(escapeHtml).join('<br>')}</p>`;
+    })
+    .join('');
+};
