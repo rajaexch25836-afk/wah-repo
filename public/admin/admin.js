@@ -12,7 +12,8 @@
       body: options.body instanceof FormData ? options.body : options.body && JSON.stringify(options.body),
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401 && !url.endsWith('/login')) showLogin();
+    if (res.status === 401 && !url.includes('/login')) showLogin();
+    if (res.status === 403 && data.mustChangePassword) showForce();
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
   }
@@ -29,10 +30,24 @@
   const money = (n) => `${state.settings.currency || 'Rs.'} ${Number(n).toLocaleString('en-PK')}`;
 
   // ---------- auth ----------
-  function showLogin() {
+  const loginViews = ['loginForm', 'codeForm', 'forceForm'];
+  function showLoginStep(id) {
     $('appView').hidden = true;
     $('loginView').hidden = false;
-    $('loginPassword').focus();
+    loginViews.forEach((v) => ($(v).hidden = v !== id));
+    $(id).querySelector('input')?.focus();
+  }
+
+  function showLogin() {
+    loginTicket = null;
+    showLoginStep('loginForm');
+  }
+
+  function showForce() {
+    $('forceForm').reset();
+    renderRules($('forceForm').next);
+    $('forceError').textContent = '';
+    showLoginStep('forceForm');
   }
 
   async function showApp() {
@@ -47,30 +62,210 @@
     loadOrders();
     loadUsers();
     loadPaymentSettings();
+    loadSecurity();
   }
 
+  const afterLogin = (res) => (res.mustChangePassword ? showForce() : showApp());
+
+  let loginTicket = null;
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('loginError').textContent = '';
     try {
-      await api('/api/admin/login', { method: 'POST', body: { password: $('loginPassword').value } });
+      const res = await api('/api/admin/login', { method: 'POST', body: { password: $('loginPassword').value } });
       $('loginPassword').value = '';
-      showApp();
+      if (res.twoFactor) {
+        loginTicket = res.ticket;
+        $('loginCode').value = '';
+        $('codeError').textContent = '';
+        setRecoveryMode(false);
+        showLoginStep('codeForm');
+      } else {
+        afterLogin(res);
+      }
     } catch (err) {
       $('loginError').textContent = err.message;
     }
   });
 
-  $('logoutBtn').addEventListener('click', async () => {
-    await api('/api/admin/logout', { method: 'POST' });
+  let recoveryMode = false;
+  function setRecoveryMode(on) {
+    recoveryMode = on;
+    $('loginCode').placeholder = on ? 'xxxxx-xxxxx' : '123 456';
+    $('loginCode').inputMode = on ? 'text' : 'numeric';
+    $('codeHelp').innerHTML = on
+      ? 'Enter one of the <strong>recovery codes</strong> you saved when you turned on Google Authenticator. Each code works once.'
+      : 'Open <strong>Google Authenticator</strong> on your phone and enter the 6-digit code for this store.';
+    $('useRecovery').textContent = on ? 'Use the Google Authenticator code instead' : 'Lost your phone? Use a recovery code';
+  }
+  $('useRecovery').addEventListener('click', () => {
+    setRecoveryMode(!recoveryMode);
+    $('loginCode').value = '';
+    $('loginCode').focus();
+  });
+  $('backToPassword').addEventListener('click', showLogin);
+
+  $('codeForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('codeError').textContent = '';
+    try {
+      const res = await api('/api/admin/login/code', { method: 'POST', body: { ticket: loginTicket, code: $('loginCode').value } });
+      afterLogin(res);
+    } catch (err) {
+      $('codeError').textContent = err.message;
+      $('loginCode').select();
+    }
+  });
+
+  // Password rules, shown as a live checklist (the server checks the same rules)
+  const PW_RULES = [
+    ['At least 10 characters', (p) => p.length >= 10],
+    ['A capital letter (A–Z)', (p) => /[A-Z]/.test(p)],
+    ['A small letter (a–z)', (p) => /[a-z]/.test(p)],
+    ['A number (0–9)', (p) => /[0-9]/.test(p)],
+    ['A symbol like ! @ # $', (p) => /[^A-Za-z0-9]/.test(p)],
+    ['No easy words like "admin", "password" or "12345"', (p) => p && !/admin|password|qwerty|12345|abcde|wah/i.test(p)],
+  ];
+  const passwordStrong = (p) => PW_RULES.every(([, test]) => test(p));
+
+  function renderRules(input) {
+    $(input.dataset.rules).innerHTML = PW_RULES.map(([label, test]) => `<li class="${test(input.value) ? 'ok' : ''}">${escapeHtml(label)}</li>`).join('');
+  }
+  document.querySelectorAll('[data-rules]').forEach((input) => {
+    renderRules(input);
+    input.addEventListener('input', () => renderRules(input));
+  });
+  document.querySelectorAll('[data-show-pw]').forEach((box) =>
+    box.addEventListener('change', () =>
+      box.closest('form').querySelectorAll('input[name=current], input[name=next], input[name=confirm]').forEach((i) => (i.type = box.checked ? 'text' : 'password'))
+    )
+  );
+
+  // Shared by the "must change" screen and the Security tab
+  async function changePassword(form) {
+    const { current, next, confirm } = form;
+    if (!passwordStrong(next.value)) throw new Error('The new password does not meet all the rules yet');
+    if (next.value !== confirm.value) throw new Error('The two new passwords do not match');
+    await api('/api/admin/password', { method: 'POST', body: { current: current.value, next: next.value } });
+    form.reset();
+    renderRules(next);
+  }
+
+  $('forceForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('forceError').textContent = '';
+    try {
+      await changePassword(e.target);
+      await showApp();
+      toast('Strong password saved');
+    } catch (err) {
+      $('forceError').textContent = err.message;
+    }
+  });
+
+  async function logout() {
+    await api('/api/admin/logout', { method: 'POST' }).catch(() => {});
     showLogin();
+  }
+  $('logoutBtn').addEventListener('click', logout);
+  document.querySelectorAll('[data-logout]').forEach((b) => b.addEventListener('click', logout));
+
+  // ---------- security tab: Google Authenticator ----------
+  async function loadSecurity() {
+    try {
+      renderTwoFactor(await api('/api/admin/me'));
+    } catch {}
+  }
+
+  function renderTwoFactor(me, step = null, data = {}) {
+    const panel = $('twoFactorPanel');
+    const head = `<h2>Google Authenticator</h2>
+      <span class="tfa-status${me.twoFactor ? ' on' : ''}">${me.twoFactor ? '● ON' : '● OFF'}</span>`;
+    if (step === 'password') {
+      panel.innerHTML = `${head}
+        <p class="hint">Enter your admin password to start.</p>
+        <form class="tfa-form" data-tfa="setup"><label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+        <div class="btn-row"><button class="btn btn-dark" type="submit">Continue</button><button type="button" class="btn btn-ghost" data-tfa-cancel>Cancel</button></div></form>`;
+    } else if (step === 'scan') {
+      panel.innerHTML = `${head}
+        <ol class="tfa-steps">
+          <li>Install <strong>Google Authenticator</strong> on your phone (Play Store / App Store).</li>
+          <li>In the app tap <strong>+</strong> → <strong>Scan a QR code</strong> and scan this:</li>
+        </ol>
+        <div class="qr"><img src="${data.qr}" alt="QR code for Google Authenticator"><span class="pmeta">Can't scan? Choose "Enter a setup key" and type:</span><code>${escapeHtml(data.secret)}</code></div>
+        <form class="tfa-form" data-tfa="enable"><label>3. Enter the 6-digit code the app shows <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>
+        <div class="btn-row"><button class="btn btn-accent" type="submit">Turn on</button><button type="button" class="btn btn-ghost" data-tfa-cancel>Cancel</button></div></form>`;
+    } else if (step === 'codes') {
+      panel.innerHTML = `${head}
+        <p><strong>Save these recovery codes now.</strong> If you lose your phone, each code lets you log in once. They will not be shown again.</p>
+        <div class="recovery-codes">${data.recoveryCodes.map((c) => `<code>${escapeHtml(c)}</code>`).join('')}</div>
+        <div class="btn-row"><button type="button" class="btn btn-ghost" data-tfa-copy>Copy</button><button type="button" class="btn btn-ghost" data-tfa-download>Download</button><button type="button" class="btn btn-dark" data-tfa-cancel>I saved them</button></div>`;
+      panel.dataset.codes = data.recoveryCodes.join('\n');
+    } else if (step === 'disable') {
+      panel.innerHTML = `${head}
+        <form class="tfa-form" data-tfa="disable">
+          <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+          <label>Code from Google Authenticator (or a recovery code) <input name="code" autocomplete="one-time-code" required></label>
+          <div class="btn-row"><button class="btn btn-dark" type="submit">Turn off</button><button type="button" class="btn btn-ghost" data-tfa-cancel>Cancel</button></div></form>`;
+    } else {
+      panel.innerHTML = me.twoFactor
+        ? `${head}<p class="hint">Logging in needs your password <strong>and</strong> the 6-digit code from the Google Authenticator app on your phone.</p>
+          <p class="pmeta">Recovery codes left: <strong>${me.recoveryCodesLeft}</strong>${me.recoveryCodesLeft < 3 ? ' — turn it off and on again to get new ones.' : ''}</p>
+          <div class="btn-row"><button type="button" class="btn btn-ghost" data-tfa-start="disable">Turn off</button></div>`
+        : `${head}<p class="hint">Add a second lock: after the password, the dashboard asks for a 6-digit code from the Google Authenticator app on your phone. Even if someone learns your password, they cannot log in without your phone.</p>
+          <div class="btn-row"><button type="button" class="btn btn-accent" data-tfa-start="password">Turn on Google Authenticator</button></div>`;
+    }
+    panel.querySelector('input')?.focus();
+  }
+
+  $('twoFactorPanel').addEventListener('click', async (e) => {
+    const panel = $('twoFactorPanel');
+    const start = e.target.closest('[data-tfa-start]');
+    if (start) renderTwoFactor(await api('/api/admin/me'), start.dataset.tfaStart);
+    if (e.target.closest('[data-tfa-cancel]')) loadSecurity();
+    if (e.target.closest('[data-tfa-copy]')) {
+      navigator.clipboard.writeText(panel.dataset.codes).then(() => toast('Recovery codes copied'), () => toast('Please write the codes down', true));
+    }
+    if (e.target.closest('[data-tfa-download]')) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([`${state.settings.storeName} admin recovery codes\nEach code works once.\n\n${panel.dataset.codes}\n`], { type: 'text/plain' }));
+      a.download = 'admin-recovery-codes.txt';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  });
+
+  $('twoFactorPanel').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const body = Object.fromEntries(new FormData(form));
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      const me = await api('/api/admin/me');
+      if (form.dataset.tfa === 'setup') {
+        renderTwoFactor(me, 'scan', await api('/api/admin/2fa/setup', { method: 'POST', body }));
+      } else if (form.dataset.tfa === 'enable') {
+        const res = await api('/api/admin/2fa/enable', { method: 'POST', body });
+        renderTwoFactor({ ...me, twoFactor: true }, 'codes', res);
+        toast('Google Authenticator is on');
+      } else if (form.dataset.tfa === 'disable') {
+        await api('/api/admin/2fa/disable', { method: 'POST', body });
+        loadSecurity();
+        toast('Google Authenticator is off');
+      }
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
   });
 
   // ---------- tabs ----------
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      ['orders', 'products', 'customers', 'payments', 'settings'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
+      ['orders', 'products', 'customers', 'payments', 'settings', 'security'].forEach((name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name));
+      if (tab.dataset.tab === 'security') loadSecurity();
     })
   );
 
@@ -819,16 +1014,14 @@
 
   $('passwordForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const f = e.target;
     try {
-      await api('/api/admin/password', { method: 'POST', body: { current: f.current.value, next: f.next.value } });
-      f.reset();
-      toast('Password updated');
+      await changePassword(e.target);
+      toast('Password updated — other devices are logged out');
     } catch (err) {
       toast(err.message, true);
     }
   });
 
   // ---------- boot ----------
-  api('/api/admin/me').then(showApp).catch(showLogin);
+  api('/api/admin/me').then((me) => (me.mustChangePassword ? showForce() : showApp())).catch(showLogin);
 })();

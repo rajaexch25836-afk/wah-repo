@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const QRCode = require('qrcode');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -60,10 +61,13 @@ function verifyPassword(password, stored) {
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
+let freshStore = false; // true on the very first start, when the store is created from seed.json
+
 function loadStore() {
   if (!fs.existsSync(STORE_FILE)) {
+    freshStore = true;
     const seed = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
-    seed.admin = { passwordHash: hashPassword(DEFAULT_PASSWORD) };
+    seed.admin = { passwordHash: hashPassword(DEFAULT_PASSWORD), mustChangePassword: true };
     writeStore(withDefaults(seed));
     return seed;
   }
@@ -78,6 +82,8 @@ function withDefaults(data) {
   data.secret ||= crypto.randomBytes(32).toString('hex'); // signs customer login cookies
   data.accountSettings = { allowRegistration: true, requireLogin: false, ...data.accountSettings };
   data.paymentSettings = { cod: true, manualAccounts: [], ...data.paymentSettings };
+  // Admins from before the strong-password rule must pick a strong password once
+  if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
 }
 
@@ -437,9 +443,113 @@ function removeUpload(src) {
   fs.promises.unlink(file).catch(() => {});
 }
 
+// ---------- Admin security: strong password + Google Authenticator ----------
+
+// Returns what is missing from a password ([] means it is strong enough).
+function passwordProblems(pw) {
+  const missing = [];
+  if (pw.length < 10) missing.push('at least 10 characters');
+  if (!/[a-z]/.test(pw)) missing.push('a small letter');
+  if (!/[A-Z]/.test(pw)) missing.push('a capital letter');
+  if (!/[0-9]/.test(pw)) missing.push('a number');
+  if (!/[^A-Za-z0-9]/.test(pw)) missing.push('a symbol like ! @ # $');
+  if (/admin|password|qwerty|12345|abcde|wah/i.test(pw)) missing.push('no easy words like "admin", "password" or "12345"');
+  return missing;
+}
+
+// TOTP (RFC 6238), the codes Google Authenticator shows: HMAC-SHA1, 30 seconds, 6 digits.
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Encode(buf) {
+  let bits = 0, value = 0, out = '';
+  for (const byte of buf) {
+    value = ((value << 8) | byte) & 0xffff;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function base32Decode(text) {
+  let bits = 0, value = 0;
+  const out = [];
+  for (const ch of text.toUpperCase().replace(/[^A-Z2-7]/g, '')) {
+    value = ((value << 5) | B32.indexOf(ch)) & 0xffff;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+function totpCode(secret, counter) {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const hash = crypto.createHmac('sha1', base32Decode(secret)).update(msg).digest();
+  const offset = hash[hash.length - 1] & 15;
+  return String((hash.readUInt32BE(offset) & 0x7fffffff) % 1e6).padStart(6, '0');
+}
+
+// Accepts the current code or the one just before/after (phone clocks drift).
+// Returns the time step used, so the same code cannot be used twice.
+function checkTotp(secret, code, lastCounter = -1) {
+  const clean = String(code || '').replace(/\s/g, '');
+  if (!/^\d{6}$/.test(clean)) return null;
+  const now = Math.floor(Date.now() / 30000);
+  for (const counter of [now - 1, now, now + 1]) {
+    if (counter > lastCounter && safeEqual(totpCode(secret, counter), clean)) return counter;
+  }
+  return null;
+}
+
+const WRONG_CODE = 'Wrong or already used code. Wait for the next code in Google Authenticator and try again.';
+
+const hashRecoveryCode = (code) => crypto.createHash('sha256').update(code.toLowerCase().replace(/[^a-z0-9]/g, '')).digest('hex');
+
+function newRecoveryCodes() {
+  const codes = Array.from({ length: 8 }, () => crypto.randomBytes(5).toString('hex').replace(/(.{5})/, '$1-'));
+  store.admin.recoveryCodes = codes.map(hashRecoveryCode);
+  return codes;
+}
+
+// Checks a Google Authenticator code, or uses up one recovery code. Saves when it succeeds.
+function checkSecondFactor(code) {
+  const totp = store.admin.totp;
+  if (!totp) return true;
+  const counter = checkTotp(totp.secret, code, totp.lastCounter);
+  if (counter !== null) {
+    totp.lastCounter = counter;
+    save();
+    return true;
+  }
+  const hash = hashRecoveryCode(String(code || ''));
+  const idx = (store.admin.recoveryCodes || []).findIndex((h) => safeEqual(h, hash));
+  if (idx === -1 || String(code || '').replace(/[^a-z0-9]/gi, '').length !== 10) return false;
+  store.admin.recoveryCodes.splice(idx, 1);
+  save();
+  return true;
+}
+
 // ---------- Auth ----------
 
 const sessions = new Map();
+const loginTickets = new Map(); // password was right, waiting for the Google Authenticator code
+let pendingTotp = null; // secret being set up, until the first code confirms it
+
+function startAdminSession(res) {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { expires: Date.now() + SESSION_TTL_MS });
+  res.setHeader(
+    'Set-Cookie',
+    `admin_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}${PUBLIC_URL.startsWith('https://') ? '; Secure' : ''}`
+  );
+}
 
 function parseCookies(header = '') {
   return Object.fromEntries(
@@ -447,14 +557,26 @@ function parseCookies(header = '') {
   );
 }
 
-function requireAdmin(req, res, next) {
+// Logged in (enough to set a new password)
+function requireAdminSession(req, res, next) {
   const token = parseCookies(req.headers.cookie).admin_session;
   const session = token && sessions.get(token);
   if (!session || session.expires < Date.now()) {
     if (token) sessions.delete(token);
     return res.status(401).json({ error: 'Not logged in' });
   }
+  req.adminToken = token;
   next();
+}
+
+// Logged in and has a strong password
+function requireAdmin(req, res, next) {
+  requireAdminSession(req, res, () => {
+    if (store.admin.mustChangePassword) {
+      return res.status(403).json({ error: 'Please set a new strong password first', mustChangePassword: true });
+    }
+    next();
+  });
 }
 
 // ---------- App ----------
@@ -707,14 +829,32 @@ app.post('/api/admin/login', (req, res) => {
     loginFailed(key);
     return res.status(401).json({ error: 'Wrong password' });
   }
+  if (store.admin.totp) {
+    const ticket = crypto.randomBytes(24).toString('hex');
+    loginTickets.set(ticket, { expires: Date.now() + 5 * 60 * 1000 });
+    return res.json({ twoFactor: true, ticket });
+  }
   failedLogins.delete(key);
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { expires: Date.now() + SESSION_TTL_MS });
-  res.setHeader(
-    'Set-Cookie',
-    `admin_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`
-  );
-  res.json({ ok: true });
+  startAdminSession(res);
+  res.json({ ok: true, mustChangePassword: Boolean(store.admin.mustChangePassword) });
+});
+
+// Step 2 when Google Authenticator is on
+app.post('/api/admin/login/code', (req, res) => {
+  const key = `admin:${req.ip}`;
+  if (loginBlocked(key)) return res.status(429).json({ error: 'Too many wrong tries. Please wait 15 minutes.' });
+  const ticket = loginTickets.get(str(req.body.ticket, 100));
+  if (!ticket || ticket.expires < Date.now()) {
+    return res.status(401).json({ error: 'Login timed out. Please enter your password again.', restart: true });
+  }
+  if (!checkSecondFactor(str(req.body.code, 20))) {
+    loginFailed(key);
+    return res.status(401).json({ error: WRONG_CODE });
+  }
+  loginTickets.delete(str(req.body.ticket, 100));
+  failedLogins.delete(key);
+  startAdminSession(res);
+  res.json({ ok: true, mustChangePassword: Boolean(store.admin.mustChangePassword) });
 });
 
 app.post('/api/admin/logout', (req, res) => {
@@ -723,16 +863,71 @@ app.post('/api/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/admin/me', requireAdmin, (req, res) => res.json({ ok: true }));
+app.get('/api/admin/me', requireAdminSession, (req, res) =>
+  res.json({
+    mustChangePassword: Boolean(store.admin.mustChangePassword),
+    twoFactor: Boolean(store.admin.totp),
+    recoveryCodesLeft: (store.admin.recoveryCodes || []).length,
+  })
+);
 
-app.post('/api/admin/password', requireAdmin, (req, res) => {
+app.post('/api/admin/password', requireAdminSession, (req, res) => {
   const current = str(req.body.current, 200);
   const next = str(req.body.next, 200);
   if (!verifyPassword(current, store.admin.passwordHash)) {
     return res.status(400).json({ error: 'Current password is wrong' });
   }
-  if (next.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+  const missing = passwordProblems(next);
+  if (missing.length) return res.status(400).json({ error: `New password needs ${missing.join(', ')}` });
+  if (next === current) return res.status(400).json({ error: 'Please choose a different password from the current one' });
   store.admin.passwordHash = hashPassword(next);
+  store.admin.mustChangePassword = false;
+  store.admin.passwordPolicy = 2;
+  store.admin.passwordChangedAt = new Date().toISOString();
+  // Log out every other device
+  for (const token of sessions.keys()) if (token !== req.adminToken) sessions.delete(token);
+  save();
+  res.json({ ok: true });
+});
+
+// Google Authenticator: step 1 — make a secret and show it as a QR code
+app.post('/api/admin/2fa/setup', requireAdmin, async (req, res, next) => {
+  try {
+    if (!verifyPassword(str(req.body.password, 200), store.admin.passwordHash)) {
+      return res.status(400).json({ error: 'Password is wrong' });
+    }
+    const secret = base32Encode(crypto.randomBytes(20));
+    pendingTotp = { secret, expires: Date.now() + 10 * 60 * 1000 };
+    const issuer = store.settings.storeName || 'Store';
+    const label = encodeURIComponent(`${issuer}:admin`);
+    const uri = `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+    res.json({ secret: secret.replace(/(.{4})/g, '$1 ').trim(), qr: await QRCode.toDataURL(uri, { margin: 1, width: 220 }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Step 2 — the first code from the app switches it on and gives the recovery codes (shown once)
+app.post('/api/admin/2fa/enable', requireAdmin, (req, res) => {
+  if (!pendingTotp || pendingTotp.expires < Date.now()) {
+    return res.status(400).json({ error: 'Setup timed out. Please start again.' });
+  }
+  const counter = checkTotp(pendingTotp.secret, str(req.body.code, 20));
+  if (counter === null) return res.status(400).json({ error: WRONG_CODE });
+  store.admin.totp = { secret: pendingTotp.secret, lastCounter: counter, enabledAt: new Date().toISOString() };
+  pendingTotp = null;
+  const recoveryCodes = newRecoveryCodes();
+  save();
+  res.json({ recoveryCodes });
+});
+
+app.post('/api/admin/2fa/disable', requireAdmin, (req, res) => {
+  if (!verifyPassword(str(req.body.password, 200), store.admin.passwordHash)) {
+    return res.status(400).json({ error: 'Password is wrong' });
+  }
+  if (!checkSecondFactor(str(req.body.code, 20))) return res.status(400).json({ error: WRONG_CODE });
+  store.admin.totp = null;
+  store.admin.recoveryCodes = [];
   save();
   res.json({ ok: true });
 });
@@ -984,9 +1179,12 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Store running:      http://localhost:${PORT}`);
   console.log(`Admin dashboard:    http://localhost:${PORT}/admin`);
-  if (!process.env.ADMIN_PASSWORD) {
-    console.log('Default admin password is "admin123" - change it from Dashboard > Settings.');
+  if (freshStore) {
+    console.log(`First login password: "${process.env.ADMIN_PASSWORD ? '(your ADMIN_PASSWORD)' : 'admin123'}" - the dashboard will then ask you to set a strong password.`);
+  } else if (store.admin.mustChangePassword) {
+    console.log('Admin: log in with your current password - the dashboard will ask you to set a strong one.');
   }
+  console.log(`Google Authenticator for admin login: ${store.admin.totp ? 'ON' : 'OFF (turn on in Dashboard > Security)'}`);
   console.log(SAFEPAY.enabled ? `Safepay online payments: ON (${SAFEPAY.env})` : 'Safepay online payments: OFF (set SAFEPAY_API_KEY and SAFEPAY_SECRET_KEY)');
   console.log(
     EASYPAISA.enabled

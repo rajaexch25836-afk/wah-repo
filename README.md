@@ -14,7 +14,7 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - Ek click me **On sale**, **Sold out**, **Trending** laga/hata sakte hain
   - **Store & Social** tab me **Home page slider**: shape chunein — **Landscape** (chaudi banner, best size **1920 × 820 px**; phone pe beech ka hissa dikhta hai) ya **Portrait** (Instagram post jaisi, best size **1080 × 1350 px**; computer pe 3 saath, phone pe ek ek). Har picture ke neeche uska size likha aata hai aur agar shape ya size theek na ho to laal warning. 6 tak pictures upload karein, har picture pe heading aur text (optional), aage peechay karein ya hatayein. Yeh store ke upar slide hoti hain (mobile pe ungli se swipe). Tabdeeli foran save hoti hai
   - **Store & Social** tab me store ka naam, heading, announcement bar, categories aur social links (WhatsApp, Instagram, Facebook, TikTok, YouTube, Email, Phone) set kar sakte hain — jo field khali chhorenge woh website pe nahi dikhega
-  - Password change kar sakte hain
+  - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein
 
 ## Chalane ka tareeqa
 
@@ -27,8 +27,28 @@ npm start
 
 - Store: http://localhost:3000
 - Dashboard: http://localhost:3000/admin
-- Pehla password: `admin123` — **login ke baad foran Store & Social > Change password se badal dein.**
+- Pehla password: `admin123` — login karte hi dashboard **naya strong password** banwata hai, us ke baghair dashboard nahi khulta.
   (Ya server chalate waqt `ADMIN_PASSWORD=mera-password npm start` — yeh sirf pehli dafa data banne pe use hota hai.)
+
+## Admin security
+
+**Strong password:** kam az kam 10 characters, bara harf (A–Z), chhota harf (a–z), number, symbol (! @ # $), aur "admin", "password", "12345" jaise aasan lafz nahi. Purane (kamzor) password wale admin se bhi agli login pe ek dafa naya strong password banwaya jaata hai.
+
+**Google Authenticator (2-step login):** Dashboard > **Security** > "Turn on Google Authenticator":
+1. Apna admin password daalein.
+2. Phone pe Google Authenticator app kholen → **+** → **Scan a QR code** → screen wala QR scan karein.
+3. App ka 6-digit code daal kar **Turn on**.
+4. **8 recovery codes** milenge — inhe copy/download karke mehfooz jagah rakhein. Phone gum ho jaye to har code ek dafa login ke kaam aata hai.
+
+Iske baad login pe password ke baad phone ka code bhi maanga jaata hai.
+
+**Phone aur recovery codes dono gum ho gaye / password bhool gaye?** Server wale computer pe:
+```bash
+# pehle server band karein (Ctrl + C)
+npm run reset-admin
+npm start
+```
+Yeh ek temporary password dikhata hai aur Google Authenticator band kar deta hai. Us se login karein, naya strong password banayein, aur Security tab se Authenticator dobara on kar lein.
 
 Pehli dafa chalne pe `data/seed.json` se sample products aur settings `data/store.json` me copy ho jaati hain. Asal data `data/store.json` me aur pictures `public/uploads/` me save hoti hain (dono git me commit nahi hote, taake aapka live data safe rahe — inka backup rakhein).
 
