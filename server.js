@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const path = require('path');
 const storage = require('./lib/storage');
 const { withContentDefaults, sanitizeContent, contentImages } = require('./lib/content');
+const notify = require('./lib/notify');
 const SEED = require('./data/seed.json');
 
 const PORT = process.env.PORT || 3000;
@@ -85,6 +86,8 @@ function withDefaults(data) {
   data.paymentSettings = { cod: true, manualAccounts: [], ...data.paymentSettings };
   data.content = withContentDefaults(data.content);
   data.applications ||= []; // "Earn with us" form
+  // WhatsApp alerts to the owner (CallMeBot)
+  data.notifySettings = { phone: '', apiKey: '', onOrder: true, onEarn: true, ...data.notifySettings };
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -837,6 +840,7 @@ app.post('/api/orders', async (req, res, next) => {
     store.nextOrderNumber += 1;
     store.orders.unshift(order);
     save();
+    if (store.notifySettings.onOrder) await alertOwner(notify.orderMessage(order, store.settings.currency));
     res.json({
       order: publicOrder(order),
       accessToken: order.accessToken,
@@ -1198,7 +1202,7 @@ app.post('/api/orders/track', (req, res) => {
 
 // "Earn with us" form. The customer also sends it to the owner's WhatsApp from the page.
 const recentApplications = new Map(); // ip -> times, max 5 per hour
-app.post('/api/earn', (req, res) => {
+app.post('/api/earn', async (req, res) => {
   const now = Date.now();
   const times = (recentApplications.get(req.ip) || []).filter((t) => t > now - 3600 * 1000);
   if (times.length >= 5) return res.status(429).json({ error: 'Too many forms sent. Please try again later.' });
@@ -1225,6 +1229,50 @@ app.post('/api/earn', (req, res) => {
   });
   store.applications.length = Math.min(store.applications.length, 2000);
   save();
+  if (store.notifySettings.onEarn) await alertOwner(notify.earnMessage(a));
+  res.json({ ok: true });
+});
+
+// Sends a WhatsApp alert to the owner. A failed alert never stops the order.
+// On Vercel it is awaited (the server may pause right after answering); elsewhere it runs in the background.
+function alertOwner(text) {
+  const n = store.notifySettings;
+  if (!n.phone || !n.apiKey) return null;
+  const sending = notify.sendWhatsApp(n, text).then((result) => {
+    if (!result.ok) console.error('WhatsApp alert failed:', result.error);
+  });
+  return storage.cloud ? sending : null;
+}
+
+// Admin: WhatsApp alerts. The API key is never sent back, only whether one is saved.
+const publicNotify = () => {
+  const { apiKey, ...rest } = store.notifySettings;
+  return { ...rest, hasApiKey: Boolean(apiKey) };
+};
+
+app.get('/api/admin/notify', requireAdmin, (req, res) => res.json(publicNotify()));
+
+app.put('/api/admin/notify', requireAdmin, (req, res) => {
+  const phone = str(req.body.phone, 25);
+  const normalized = notify.normalizePhone(phone);
+  if (phone && !normalized) return res.status(400).json({ error: 'Please enter the WhatsApp number with country code, e.g. 923001234567' });
+  const apiKey = str(req.body.apiKey, 40).replace(/\s/g, '');
+  store.notifySettings = {
+    ...store.notifySettings,
+    phone: normalized,
+    apiKey: req.body.removeApiKey ? '' : apiKey || store.notifySettings.apiKey,
+    onOrder: Boolean(req.body.onOrder),
+    onEarn: Boolean(req.body.onEarn),
+  };
+  save();
+  res.json(publicNotify());
+});
+
+app.post('/api/admin/notify/test', requireAdmin, async (req, res) => {
+  const result = await notify.sendWhatsApp(store.notifySettings, `✅ Test from ${store.settings.storeName}: WhatsApp alerts are working.`);
+  store.notifySettings.lastTest = { ok: result.ok, error: result.error || '', at: new Date().toISOString() };
+  save();
+  if (!result.ok) return res.status(400).json({ error: result.error });
   res.json({ ok: true });
 });
 

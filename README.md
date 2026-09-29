@@ -18,6 +18,7 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - **Store & Social** tab me store ka naam, heading, announcement bar, categories aur social links (WhatsApp, Instagram, Facebook, TikTok, YouTube, Email, Phone) set kar sakte hain — jo field khali chhorenge woh website pe nahi dikhega
   - **Pages** tab: Size guide (text/table aur picture), dukaan ki location, aur About us, Shipping, Return, Terms, Earn with us — har page ka title, text aur picture
   - **Earn with us** tab: bhare hue forms (call, WhatsApp, email links), status New / Contacted / Approved / Rejected, delete
+  - **WhatsApp alerts** (Store & Social tab ke neeche): har naye order (aur chahein to "Earn with us" form) pe aapke WhatsApp pe khud message. Free CallMeBot service se: phone me **+34 684 78 33 47** save karein, us ko WhatsApp pe `I allow callmebot to send me messages` bhejein, jo **API key** aaye woh apne number ke saath yahan daalein, save karein aur "Send test message" dabayein
   - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein
 
 ## Chalane ka tareeqa
@@ -150,6 +151,7 @@ GitHub Pages pe dashboard nahi chalega kyun ke woh sirf static files dikhata hai
 | Path | Kaam |
 |------|------|
 | `server.js` | Backend: API, login, picture upload |
+| `lib/notify.js` | WhatsApp alerts (CallMeBot) |
 | `lib/content.js` | Pages, size guide aur location ka shuru ka text |
 | `lib/storage.js` | Data aur pictures kahan save hon (disk, ya Vercel pe Redis + Blob) |
 | `data/seed.json` | Shuru ka sample data |
