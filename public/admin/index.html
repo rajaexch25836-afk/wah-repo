@@ -204,6 +204,31 @@
 
           <div class="save-bar"><button class="btn btn-accent" type="submit">Save settings</button></div>
         </form>
+
+        <form id="notifyForm" class="panel notify-panel" novalidate>
+          <h2>WhatsApp alerts <span class="tfa-status" id="notifyStatus"></span></h2>
+          <p class="hint">Get a WhatsApp message on your phone for every new order, free, through CallMeBot. One-time setup:</p>
+          <ol class="tfa-steps">
+            <li>Save <strong>+34 684 78 33 47</strong> in your phone contacts (name it CallMeBot).</li>
+            <li>On WhatsApp send it: <code>I allow callmebot to send me messages</code></li>
+            <li>It replies with your <strong>API key</strong> (if not within 2 minutes, try again after 24 hours). Enter it below, save, and press “Send test message”.</li>
+          </ol>
+          <div class="row">
+            <label>Your WhatsApp number <small>With country code, e.g. 923001234567</small><input name="phone" inputmode="tel" maxlength="25" placeholder="923001234567"></label>
+            <label>API key <small id="apiKeyHelp">From the CallMeBot reply</small><input name="apiKey" autocomplete="off" maxlength="40" placeholder="123456"></label>
+          </div>
+          <div class="switches switches-col">
+            <label class="switch"><input type="checkbox" name="onOrder"><span></span> Message me for every new order</label>
+            <label class="switch"><input type="checkbox" name="onEarn"><span></span> Message me when someone fills “Earn with us”</label>
+          </div>
+          <p class="pmeta" id="notifyLast"></p>
+          <div class="btn-row">
+            <button class="btn btn-accent" type="submit">Save alerts</button>
+            <button class="btn btn-ghost" type="button" id="notifyTestBtn">Send test message</button>
+            <button class="btn btn-ghost" type="button" id="notifyRemoveBtn" hidden>Remove API key</button>
+          </div>
+          <p class="hint">CallMeBot is a free outside service for personal use: messages can sometimes be late, and order details (customer name, phone, address) pass through it. Every order is always saved in the Orders tab either way.</p>
+        </form>
       </section>
 
       <!-- Pages: About us, policies, Earn with us, size guide, location -->

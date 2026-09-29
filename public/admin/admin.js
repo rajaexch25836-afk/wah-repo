@@ -62,6 +62,7 @@
     fillSettings();
     renderContent();
     loadApplications();
+    loadNotify();
     loadOrders();
     loadUsers();
     loadPaymentSettings();
@@ -1161,6 +1162,78 @@
     readContent();
     setContentPath(remove.dataset.imageRemove, '');
     saveContent('Picture removed');
+  });
+
+  // ---------- WhatsApp alerts (CallMeBot) ----------
+  const notifyForm = $('notifyForm');
+
+  async function loadNotify() {
+    try {
+      renderNotify(await api('/api/admin/notify'));
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderNotify(n) {
+    notifyForm.phone.value = n.phone || '';
+    notifyForm.apiKey.value = '';
+    notifyForm.apiKey.placeholder = n.hasApiKey ? '•••••• (saved — type a new one to change)' : '123456';
+    notifyForm.onOrder.checked = n.onOrder;
+    notifyForm.onEarn.checked = n.onEarn;
+    const on = Boolean(n.phone && n.hasApiKey);
+    $('notifyStatus').textContent = on ? '● ON' : '● OFF';
+    $('notifyStatus').classList.toggle('on', on);
+    $('notifyRemoveBtn').hidden = !n.hasApiKey;
+    $('notifyTestBtn').disabled = !on;
+    $('notifyLast').textContent = n.lastTest
+      ? `Last test ${new Date(n.lastTest.at).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}: ${n.lastTest.ok ? 'sent ✓' : n.lastTest.error}`
+      : '';
+  }
+
+  async function saveNotify(extra = {}) {
+    const f = notifyForm;
+    const n = await api('/api/admin/notify', {
+      method: 'PUT',
+      body: { phone: f.phone.value, apiKey: f.apiKey.value, onOrder: f.onOrder.checked, onEarn: f.onEarn.checked, ...extra },
+    });
+    renderNotify(n);
+    return n;
+  }
+
+  notifyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await saveNotify();
+      toast('WhatsApp alerts saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  $('notifyTestBtn').addEventListener('click', async () => {
+    const btn = $('notifyTestBtn');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      await api('/api/admin/notify/test', { method: 'POST' });
+      toast('Test message sent — check your WhatsApp');
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.textContent = 'Send test message';
+      loadNotify();
+    }
+  });
+
+  $('notifyRemoveBtn').addEventListener('click', async () => {
+    if (!confirm('Remove the API key? WhatsApp alerts will stop.')) return;
+    try {
+      await saveNotify({ removeApiKey: true });
+      toast('API key removed');
+    } catch (err) {
+      toast(err.message, true);
+    }
   });
 
   // ---------- Earn with us forms ----------

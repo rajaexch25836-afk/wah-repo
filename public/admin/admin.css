@@ -267,3 +267,11 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
 #contentForm textarea { font-family: inherit; line-height: 1.5; }
 .earn-row .status-select { width: auto; }
 
+
+/* WhatsApp alerts */
+.notify-panel { margin-top: 16px; }
+.notify-panel h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.notify-panel code { background: var(--bg); padding: 1px 6px; border-radius: 4px; }
+@media (max-width: 760px) {
+  .notify-panel .row { grid-template-columns: 1fr; }
+}
