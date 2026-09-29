@@ -439,6 +439,14 @@
     $('manualPay').hidden = checkoutForm.paymentMethod?.value !== 'manual';
   }
 
+  // After logout nothing of the customer's may stay behind on this device
+  function clearCustomerDetails() {
+    [...CUSTOMER_FIELDS, 'notes', 'reference', 'receipt'].forEach((k) => (checkoutForm[k].value = ''));
+    try {
+      localStorage.removeItem('customer');
+    } catch {}
+  }
+
   function fillCheckoutFromUser() {
     if (!state.user) return;
     CUSTOMER_FIELDS.forEach((k) => state.user[k] && (checkoutForm[k].value = state.user[k]));
@@ -492,7 +500,7 @@
     const paymentMethod = f.paymentMethod.value;
     const manual = paymentMethod === 'manual' ? { accountId: f.manualAccount.value, reference: f.reference.value.trim() } : undefined;
     try {
-      localStorage.setItem('customer', JSON.stringify(Object.fromEntries(CUSTOMER_FIELDS.map((k) => [k, customer[k]]))));
+      if (!state.user) localStorage.setItem('customer', JSON.stringify(Object.fromEntries(CUSTOMER_FIELDS.map((k) => [k, customer[k]]))));
     } catch {}
 
     const btn = $('placeOrderBtn');
@@ -631,43 +639,68 @@
     if (then) state.afterLogin = then;
     if (view === 'register' && !state.accounts.allowRegistration) view = 'login';
     const body = $('accountBody');
+    const accountViews = ['profile', 'edit', 'password'];
     let orders = [];
-    if (view === 'profile' && state.user) {
+    if (accountViews.includes(view) && state.user) {
       // Always show fresh details (an order may have saved the address; the admin may have edited them)
       try {
         ({ user: state.user, orders } = await jsonFetch('/api/account', null, 'GET'));
       } catch {
         state.user = null; // logged out or blocked
+        clearCustomerDetails();
         view = 'login';
       }
       updateAccountUI();
     }
-    if (view === 'profile' && state.user) {
+    if (accountViews.includes(view) && state.user) {
       const u = state.user;
-      body.innerHTML = `
-        <h2>Hi, ${escapeHtml(u.firstName)}</h2>
-        <p>${escapeHtml(u.email)} · ${escapeHtml(u.phone)}</p>
-        <h3>My orders</h3>
-        <div class="my-orders">${renderMyOrders(orders)}</div>
-        <h3>My details</h3>
-        <form class="form-stack" data-form="profile" novalidate>
-          <div class="field-row">${field('First name', 'firstName', 'maxlength="50" autocomplete="given-name"', u.firstName)}${field('Last name', 'lastName', 'maxlength="50" autocomplete="family-name"', u.lastName)}</div>
-          ${field('Email', 'email', 'type="email" maxlength="120" autocomplete="email"', u.email)}
-          ${field('Mobile number', 'phone', 'type="tel" maxlength="20" autocomplete="tel"', u.phone)}
-          <label>Address <textarea name="address" rows="2" maxlength="300" autocomplete="street-address">${escapeHtml(u.address || '')}</textarea></label>
-          ${field('City', 'city', 'maxlength="60" autocomplete="address-level2"', u.city)}
-          <p class="form-error" data-error></p>
-          <button class="btn btn-dark btn-block" type="submit">Save details</button>
-        </form>
-        <h3>Change password</h3>
-        <form class="form-stack" data-form="password" novalidate>
-          ${field('Current password', 'current', 'type="password" autocomplete="current-password"')}
-          ${field('New password', 'next', 'type="password" minlength="6" autocomplete="new-password"')}
-          <p class="form-error" data-error></p>
-          <button class="btn btn-ghost btn-block" type="submit">Update password</button>
-        </form>
-        <button class="link-btn" data-logout>Log out</button>`;
+      const back = '<button type="button" class="link-btn back-btn" data-account="profile">← Back to my account</button>';
+      if (view === 'edit') {
+        body.innerHTML = `
+          ${back}
+          <h2>Edit profile</h2>
+          <form class="form-stack" data-form="profile" novalidate>
+            <div class="field-row">${field('First name', 'firstName', 'maxlength="50" autocomplete="given-name"', u.firstName)}${field('Last name', 'lastName', 'maxlength="50" autocomplete="family-name"', u.lastName)}</div>
+            ${field('Email', 'email', 'type="email" maxlength="120" autocomplete="email"', u.email)}
+            ${field('Mobile number', 'phone', 'type="tel" maxlength="20" autocomplete="tel"', u.phone)}
+            <label>Address <textarea name="address" rows="2" maxlength="300" autocomplete="street-address">${escapeHtml(u.address || '')}</textarea></label>
+            ${field('City', 'city', 'maxlength="60" autocomplete="address-level2"', u.city)}
+            <p class="form-error" data-error></p>
+            <button class="btn btn-dark btn-block" type="submit">Save details</button>
+          </form>`;
+      } else if (view === 'password') {
+        body.innerHTML = `
+          ${back}
+          <h2>Change password</h2>
+          <form class="form-stack" data-form="password" novalidate>
+            ${field('Current password', 'current', 'type="password" autocomplete="current-password"')}
+            ${field('New password <small>(at least 6 characters)</small>', 'next', 'type="password" minlength="6" autocomplete="new-password"')}
+            <p class="form-error" data-error></p>
+            <button class="btn btn-dark btn-block" type="submit">Update password</button>
+          </form>`;
+      } else {
+        const detail = (label, value) => `<div><span>${label}</span><strong>${value ? escapeHtml(value) : '<em>Not added</em>'}</strong></div>`;
+        body.innerHTML = `
+          <h2>Hi, ${escapeHtml(u.firstName)}</h2>
+          <h3>My orders</h3>
+          <div class="my-orders">${renderMyOrders(orders)}</div>
+          <h3>My details</h3>
+          <div class="my-details">
+            ${detail('Name', `${u.firstName} ${u.lastName}`)}
+            ${detail('Email', u.email)}
+            ${detail('Mobile', u.phone)}
+            ${detail('Address', [u.address, u.city].filter(Boolean).join(', '))}
+          </div>
+          <div class="account-actions">
+            <button type="button" class="btn btn-dark" data-account="edit">Edit profile</button>
+            <button type="button" class="btn btn-ghost" data-account="password">Change password</button>
+          </div>
+          <button type="button" class="btn btn-ghost btn-block logout-btn" data-logout>Log out</button>`;
+      }
       openOverlay($('accountModal'));
+      body.scrollTop = 0;
+      $('accountModal').querySelector('.modal').scrollTop = 0;
+      if (view !== 'profile') setTimeout(() => body.querySelector('input')?.focus(), 50);
       return;
     }
     const tabs = state.accounts.allowRegistration
@@ -739,6 +772,7 @@
     if (!e.target.closest('[data-logout]')) return;
     await fetch('/api/account/logout', { method: 'POST' }).catch(() => {});
     state.user = null;
+    clearCustomerDetails();
     updateAccountUI();
     closeOverlay($('accountModal'));
     toast('You are logged out');
@@ -767,11 +801,12 @@
           updateAccountUI();
           fillCheckoutFromUser();
           toast('Details saved');
+          openAccount('profile');
           break;
         case 'password':
           await jsonFetch('/api/account/password', data);
-          form.reset();
           toast('Password updated');
+          openAccount('profile');
           break;
       }
     } catch (err) {
