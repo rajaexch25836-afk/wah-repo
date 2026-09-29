@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
+  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -37,6 +37,71 @@
     if (p.featured && !p.soldOut) out.push('<span class="badge hot">Trending</span>');
     return out.length ? `<div class="badges">${out.join('')}</div>` : '';
   }
+
+  // ---------- wishlist ----------
+  const inWishlist = (id) => state.wishlist.includes(id);
+  const heartHtml = (id, big = false) =>
+    `<span class="wish${big ? ' wish-big' : ''}${inWishlist(id) ? ' on' : ''}" data-wish="${escapeHtml(id)}" role="button" tabindex="0" aria-label="Save to wishlist" aria-pressed="${inWishlist(id)}">${inWishlist(id) ? '♥' : '♡'}</span>`;
+
+  function loadWishlist() {
+    if (state.user) return (state.wishlist = [...(state.user.wishlist || [])]);
+    try {
+      state.wishlist = JSON.parse(localStorage.getItem('wishlist') || '[]');
+    } catch {
+      state.wishlist = [];
+    }
+  }
+
+  async function saveWishlist() {
+    try {
+      localStorage.setItem('wishlist', JSON.stringify(state.wishlist));
+    } catch {}
+    if (state.user) {
+      try {
+        state.user.wishlist = await jsonFetch('/api/account/wishlist', { ids: state.wishlist }, 'PUT');
+      } catch {}
+    }
+  }
+
+  function toggleWish(id) {
+    const on = !inWishlist(id);
+    state.wishlist = on ? [...state.wishlist, id] : state.wishlist.filter((x) => x !== id);
+    document.querySelectorAll(`[data-wish="${CSS.escape(id)}"]`).forEach((el) => {
+      el.classList.toggle('on', on);
+      el.textContent = on ? '♥' : '♡';
+      el.setAttribute('aria-pressed', on);
+    });
+    renderWishCount();
+    saveWishlist();
+    toast(on ? 'Saved to your wishlist ♥' : 'Removed from wishlist');
+    if (!$('pageModal').hidden && location.hash === '#wishlist') openPage('wishlist');
+  }
+
+  function renderWishCount() {
+    const n = state.wishlist.filter((id) => state.products.some((p) => p.id === id)).length;
+    $('wishCount').textContent = n;
+    $('wishCount').hidden = !n;
+  }
+
+  // Hearts work everywhere (cards, product view, wishlist page) and never open the product
+  document.addEventListener(
+    'click',
+    (e) => {
+      const heart = e.target.closest('[data-wish]');
+      if (!heart) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleWish(heart.dataset.wish);
+    },
+    true
+  );
+  document.addEventListener('keydown', (e) => {
+    const heart = e.target.closest?.('[data-wish]');
+    if (heart && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      toggleWish(heart.dataset.wish);
+    }
+  });
 
   // ---------- ratings ----------
   const productReviews = (id) => state.reviews.filter((r) => r.productId === id);
@@ -219,7 +284,12 @@
 
   function visibleProducts() {
     const q = state.query.toLowerCase();
+    const f = state.filters;
     let list = state.products.filter((p) => {
+      if (f.sizes.size && !(p.sizes || []).some((x) => f.sizes.has(x))) return false;
+      if (f.colors.size && !(p.colors || []).some((x) => f.colors.has(x.toLowerCase()))) return false;
+      if (f.min !== null && finalPrice(p) < f.min) return false;
+      if (f.max !== null && finalPrice(p) > f.max) return false;
       if (state.filter === 'sale' && !p.onSale) return false;
       if (state.filter.startsWith('col:')) {
         if (!state.collections.find((c) => `col:${c.id}` === state.filter)?.productIds.includes(p.id)) return false;
@@ -248,7 +318,7 @@
 
   const cardHtml = (p) => `
         <button class="card${p.soldOut ? ' sold' : ''}" data-id="${escapeHtml(p.id)}">
-          <div class="card-media">${media(p)}${badges(p)}<span class="card-quick">${p.soldOut ? 'Sold out' : 'Quick view'}</span></div>
+          <div class="card-media">${media(p)}${badges(p)}${heartHtml(p.id)}<span class="card-quick">${p.soldOut ? 'Sold out' : 'Quick view'}</span></div>
           <div class="card-info">
             <div class="card-cat">${escapeHtml(p.category)}</div>
             <div class="card-name">${escapeHtml(p.name)}</div>
@@ -256,6 +326,56 @@
             ${ratingLine(p.id)}
           </div>
         </button>`;
+
+  // ---------- filters: size, colour, price ----------
+  function renderFilterOptions() {
+    const sizes = [...new Set(state.products.flatMap((p) => p.sizes || []))];
+    const colors = [...new Map(state.products.flatMap((p) => p.colors || []).map((c) => [c.toLowerCase(), c])).values()];
+    const f = state.filters;
+    $('filterSizes').innerHTML = sizes.map((v) => `<button type="button" class="opt${f.sizes.has(v) ? ' active' : ''}" data-fsize="${escapeHtml(v)}">${escapeHtml(v)}</button>`).join('') || '<span class="acc-note">—</span>';
+    $('filterColors').innerHTML =
+      colors
+        .map((v) => {
+          const sw = colorSwatch(v);
+          return `<button type="button" class="opt${f.colors.has(v.toLowerCase()) ? ' active' : ''}" data-fcolor="${escapeHtml(v.toLowerCase())}">${sw ? `<span class="swatch" style="background:${sw}"></span>` : ''}${escapeHtml(v)}</button>`;
+        })
+        .join('') || '<span class="acc-note">—</span>';
+    const count = f.sizes.size + f.colors.size + (f.min !== null) + (f.max !== null);
+    $('filterCount').textContent = count;
+    $('filterCount').hidden = !count;
+  }
+
+  $('filterBtn').addEventListener('click', () => {
+    const open = $('filterPanel').hidden;
+    $('filterPanel').hidden = !open;
+    $('filterBtn').setAttribute('aria-expanded', open);
+  });
+  $('filterPanel').addEventListener('click', (e) => {
+    const f = state.filters;
+    const size = e.target.closest('[data-fsize]');
+    const color = e.target.closest('[data-fcolor]');
+    if (size) f.sizes.has(size.dataset.fsize) ? f.sizes.delete(size.dataset.fsize) : f.sizes.add(size.dataset.fsize);
+    if (color) f.colors.has(color.dataset.fcolor) ? f.colors.delete(color.dataset.fcolor) : f.colors.add(color.dataset.fcolor);
+    if (e.target.closest('#clearFilters')) {
+      f.sizes.clear();
+      f.colors.clear();
+      f.min = f.max = null;
+      $('priceMin').value = $('priceMax').value = '';
+    }
+    if (size || color || e.target.closest('#clearFilters')) {
+      renderFilterOptions();
+      renderGrid();
+    }
+  });
+  ['priceMin', 'priceMax'].forEach((id) =>
+    $(id).addEventListener('input', () => {
+      const v = (x) => (x.value === '' ? null : Number(x.value));
+      state.filters.min = v($('priceMin'));
+      state.filters.max = v($('priceMax'));
+      renderFilterOptions();
+      renderGrid();
+    })
+  );
 
   // Collections marked "show on home page" get their own row above the shop
   function renderCollections() {
@@ -306,10 +426,11 @@
       </div>
       <div class="detail">
         <div class="card-cat">${escapeHtml(p.category)}</div>
-        <h2>${escapeHtml(p.name)}</h2>
+        <div class="detail-title"><h2>${escapeHtml(p.name)}</h2>${heartHtml(p.id, true)}</div>
         ${ratingLine(p.id)}
         ${priceHtml(p)}
         ${p.soldOut ? '<span class="badge sold" style="align-self:flex-start">Sold out</span>' : hasDiscount(p) ? `<span class="badge" style="align-self:flex-start">Save ${discount(p)}%</span>` : ''}
+        ${state.loyalty.enabled && state.loyalty.earnPer > 0 && Math.floor(finalPrice(p) / state.loyalty.earnPer) > 0 ? `<div class="earn-points">⭐ Earn ${Math.floor(finalPrice(p) / state.loyalty.earnPer)} points with this</div>` : ''}
         ${p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : ''}
         ${optGroup('Size', 'size', p.sizes, guideLink)}
         ${optGroup('Colour', 'color', p.colors)}
@@ -319,6 +440,10 @@
           ${p.soldOut
             ? state.settings.social?.whatsapp ? `<button class="btn btn-wa btn-block" id="askBtn"><span class="icon">${ICONS.whatsapp}</span> Ask when it’s back</button>` : ''
             : '<button class="btn btn-accent btn-block" id="buyNowBtn">Buy now</button>'}
+        </div>
+        <div class="share-row">
+          <button type="button" class="btn btn-ghost btn-sm-store" id="shareBtn">📤 Share</button>
+          <a class="btn btn-ghost btn-sm-store" id="shareWa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${p.name} — ${money(finalPrice(p))}\n${productUrl(p.id)}`)}"><span class="icon">${ICONS.whatsapp}</span> Send on WhatsApp</a>
         </div>
         ${reviewsHtml(p)}
       </div>`;
@@ -350,6 +475,11 @@
         closeOverlay($('productModal'));
         openCart('details');
       }
+      if (e.target.closest('#shareBtn')) {
+        const url = productUrl(p.id);
+        if (navigator.share) navigator.share({ title: p.name, text: `${p.name} — ${money(finalPrice(p))}`, url }).catch(() => {});
+        else navigator.clipboard?.writeText(url).then(() => toast('Link copied'), () => toast(url));
+      }
       if (e.target.closest('#writeReviewBtn')) {
         body.querySelector('#reviewForm').hidden = false;
         e.target.closest('#writeReviewBtn').hidden = true;
@@ -378,7 +508,11 @@
       }
     };
     openOverlay($('productModal'));
+    if (location.hash !== `#product/${p.id}`) history.replaceState(null, '', `#product/${p.id}`);
   }
+
+  // Every product has its own link, e.g. https://yourstore.com/#product/p1
+  const productUrl = (id) => `${location.origin}${location.pathname}#product/${encodeURIComponent(id)}`;
 
   function reviewsHtml(p) {
     const list = productReviews(p.id);
@@ -483,6 +617,8 @@
     if (details) {
       checkoutForm.scrollTop = 0;
       renderLoginHint();
+      renderPointsOption();
+      renderSavedAddresses();
     }
     renderTotals();
   }
@@ -497,7 +633,27 @@
     return match ? match.fee : d.fee;
   }
 
-  const cartTotal = () => cartSubtotal() + deliveryFee(checkoutForm.city.value, cartSubtotal());
+  // Same rule as the server: points worth at most maxPercent of the items
+  function pointsDiscount(subtotal) {
+    const l = state.loyalty;
+    const pts = state.user?.points || 0;
+    if (!l.enabled || !pts || !(l.pointValue > 0)) return { points: 0, discount: 0 };
+    const points = Math.min(pts, Math.floor(Math.floor((subtotal * l.maxPercent) / 100) / l.pointValue));
+    return { points, discount: points * l.pointValue };
+  }
+  const usingPoints = () => state.step === 'details' && checkoutForm.usePoints.checked;
+
+  const cartTotal = () => {
+    const sub = cartSubtotal();
+    return sub + deliveryFee(checkoutForm.city.value, sub) - (usingPoints() ? pointsDiscount(sub).discount : 0);
+  };
+
+  function renderPointsOption() {
+    const { points, discount } = pointsDiscount(cartSubtotal());
+    $('pointsUse').hidden = !points;
+    if (!points) checkoutForm.usePoints.checked = false;
+    $('pointsUseText').innerHTML = `Use <b>${points}</b> of my ${state.user?.points || 0} points — save <b>${money(discount)}</b>`;
+  }
 
   function renderTotals() {
     const subtotal = cartSubtotal();
@@ -505,15 +661,19 @@
     const hasDelivery = d.fee > 0 || (d.cityFees || []).some((c) => c.fee > 0);
     const fee = deliveryFee(checkoutForm.city.value, subtotal);
     const details = state.step === 'details';
-    $('sumRows').hidden = !hasDelivery || !subtotal;
+    const pts = usingPoints() ? pointsDiscount(subtotal).discount : 0;
+    $('sumRows').hidden = (!hasDelivery && !pts) || !subtotal;
     $('cartSubtotal').textContent = money(subtotal);
+    $('cartDelivery').parentElement.hidden = !hasDelivery;
     $('cartDelivery').textContent = fee ? money(fee) : 'Free';
     $('deliveryNote').textContent = !details && fee && (d.cityFees || []).length ? '(depends on city)' : '';
-    $('cartTotal').textContent = money(subtotal + fee);
+    $('pointsRow').hidden = !pts;
+    $('cartPoints').textContent = `− ${money(pts)}`;
+    $('cartTotal').textContent = money(subtotal + fee - pts);
     const left = d.freeAbove - subtotal;
     $('freeHint').hidden = !(hasDelivery && d.freeAbove > 0 && subtotal && left > 0);
     $('freeHint').textContent = `Add ${money(left)} more for free delivery`;
-    $('manualAmount').textContent = money(subtotal + fee);
+    $('manualAmount').textContent = money(subtotal + fee - pts);
   }
 
   function renderLoginHint() {
@@ -581,6 +741,26 @@
     CUSTOMER_FIELDS.forEach((k) => state.user[k] && (checkoutForm[k].value = state.user[k]));
   }
 
+  // Chips for the customer's saved addresses (and their main one), which fill the address and city
+  function renderSavedAddresses() {
+    const u = state.user;
+    const list = u ? [...(u.address ? [{ id: 'main', label: 'Main', address: u.address, city: u.city }] : []), ...(u.addresses || [])] : [];
+    $('savedAddresses').innerHTML = list.length
+      ? `<div class="opt-label">Deliver to</div><div class="opts">${list
+          .map((a) => `<button type="button" class="opt${checkoutForm.address.value === a.address ? ' active' : ''}" data-addr="${escapeHtml(a.id)}">🏠 ${escapeHtml(a.label)}</button>`)
+          .join('')}<button type="button" class="opt" data-account="address-new">+ New</button></div>`
+      : '';
+    $('savedAddresses').onclick = (e) => {
+      const chip = e.target.closest('[data-addr]');
+      if (!chip) return;
+      const a = list.find((x) => x.id === chip.dataset.addr);
+      checkoutForm.address.value = a.address;
+      checkoutForm.city.value = a.city;
+      renderSavedAddresses();
+      renderTotals();
+    };
+  }
+
   function openCart(step = 'bag') {
     setStep(cartLines().length ? step : 'bag');
     openOverlay($('cartDrawer'));
@@ -644,6 +824,7 @@
           customer,
           paymentMethod,
           manual,
+          usePoints: usingPoints(),
           items: cartLines().map((l) => ({ id: l.id, size: l.size, color: l.color, qty: l.qty })),
         }),
       });
@@ -665,6 +846,8 @@
       state.cart = [];
       saveCart();
       ['notes', 'reference', 'receipt'].forEach((k) => (f[k].value = ''));
+      f.usePoints.checked = false;
+      refreshUser();
       closeOverlay($('cartDrawer'));
       showOrder(data.order);
     } catch (err) {
@@ -712,6 +895,7 @@
       <div class="order-summary">
         ${order.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${i.size ? ` (${escapeHtml(i.size)})` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
         ${order.deliveryFee ? `<div><span>Delivery</span><span>${money(order.deliveryFee)}</span></div>` : ''}
+        ${order.pointsDiscount ? `<div><span>Points (${order.pointsUsed})</span><span>− ${money(order.pointsDiscount)}</span></div>` : ''}
         <div class="sum-total"><span>Total</span><span>${money(order.total)}</span></div>
         <div><span>Payment</span><span>${payText}</span></div>
       </div>
@@ -786,7 +970,10 @@
     if (then) state.afterLogin = then;
     if (view === 'register' && !state.accounts.allowRegistration) view = 'login';
     const body = $('accountBody');
-    const accountViews = ['profile', 'edit', 'password'];
+    // 'address-new' / 'address-<index>': add or edit a saved address
+    const addressIndex = view.startsWith('address-') ? view.slice(8) : null;
+    if (addressIndex !== null) view = 'address';
+    const accountViews = ['profile', 'edit', 'password', 'address'];
     let orders = [];
     if (accountViews.includes(view) && state.user) {
       // Always show fresh details (an order may have saved the address; the admin may have edited them)
@@ -815,6 +1002,18 @@
             <p class="form-error" data-error></p>
             <button class="btn btn-dark btn-block" type="submit">Save details</button>
           </form>`;
+      } else if (view === 'address') {
+        const a = (u.addresses || [])[Number(addressIndex)] || { label: '', address: '', city: '' };
+        body.innerHTML = `
+          ${back}
+          <h2>${addressIndex === 'new' ? 'Add address' : 'Edit address'}</h2>
+          <form class="form-stack" data-form="address" data-index="${escapeHtml(addressIndex)}" novalidate>
+            ${field('Name for this address <small>(e.g. Home, Office)</small>', 'label', 'maxlength="30"', a.label)}
+            <label>Full address <textarea name="address" rows="3" maxlength="300" placeholder="House #, street, area / sector">${escapeHtml(a.address)}</textarea></label>
+            ${field('City', 'city', 'maxlength="60" autocomplete="address-level2"', a.city)}
+            <p class="form-error" data-error></p>
+            <button class="btn btn-dark btn-block" type="submit">Save address</button>
+          </form>`;
       } else if (view === 'password') {
         body.innerHTML = `
           ${back}
@@ -831,6 +1030,23 @@
           <h2>Hi, ${escapeHtml(u.firstName)}</h2>
           <h3>My orders</h3>
           <div class="my-orders">${renderMyOrders(orders)}</div>
+          ${state.loyalty.enabled ? `
+          <h3>My points</h3>
+          <div class="points-card">
+            <div><b>${u.points || 0}</b> points <span>worth ${money((u.points || 0) * state.loyalty.pointValue)}</span></div>
+            <p>Earn 1 point for every ${money(state.loyalty.earnPer)} you spend (added when your order is delivered). Use them at checkout for up to ${state.loyalty.maxPercent}% off.</p>
+            ${(u.pointsLog || []).length ? `<ul>${u.pointsLog.slice(0, 5).map((l) => `<li><span>${escapeHtml(l.reason)}</span><b class="${l.change > 0 ? 'plus' : 'minus'}">${l.change > 0 ? '+' : ''}${l.change}</b></li>`).join('')}</ul>` : ''}
+          </div>` : ''}
+          <h3>My wishlist</h3>
+          <button type="button" class="btn btn-ghost btn-block" data-page="wishlist">♥ ${state.wishlist.length} saved item(s) — view</button>
+          <h3>My addresses</h3>
+          <div class="my-addresses">
+            ${(u.addresses || [])
+              .map((a, i) => `<div class="addr"><div><b>🏠 ${escapeHtml(a.label)}</b><span>${escapeHtml(a.address)}, ${escapeHtml(a.city)}</span></div>
+                <div class="addr-actions"><button type="button" class="link-btn" data-account="address-${i}">Edit</button><button type="button" class="link-btn" data-delete-address="${i}">Delete</button></div></div>`)
+              .join('')}
+            ${(u.addresses || []).length < 5 ? '<button type="button" class="btn btn-ghost btn-block" data-account="address-new">+ Add address (Home, Office…)</button>' : ''}
+          </div>
           <h3>My details</h3>
           <div class="my-details">
             ${detail('Name', `${u.firstName} ${u.lastName}`)}
@@ -854,6 +1070,20 @@
     const tabs = state.accounts.allowRegistration
       ? `<div class="acc-tabs"><button type="button" class="${view === 'login' ? 'active' : ''}" data-account="login">Log in</button><button type="button" class="${view === 'register' ? 'active' : ''}" data-account="register">Create account</button></div>`
       : '';
+    if (view === 'forgot') {
+      body.innerHTML = `
+        <button type="button" class="link-btn back-btn" data-account="login">← Back to log in</button>
+        <h2>Forgot password</h2>
+        <p class="acc-note">Enter your email or mobile number. We will get your request and send you a new password on WhatsApp or by call.</p>
+        <form class="form-stack" data-form="forgot" novalidate>
+          ${field('Email or mobile number', 'login', 'autocomplete="username"')}
+          <p class="form-error" data-error></p>
+          <button class="btn btn-dark btn-block" type="submit">Send request</button>
+        </form>`;
+      openOverlay($('accountModal'));
+      setTimeout(() => body.querySelector('input')?.focus(), 50);
+      return;
+    }
     body.innerHTML =
       view === 'register'
         ? `<h2>Create account</h2>${tabs}
@@ -871,6 +1101,7 @@
           ${field('Password', 'password', 'type="password" autocomplete="current-password"')}
           <p class="form-error" data-error></p>
           <button class="btn btn-dark btn-block" type="submit">Log in</button>
+          <button type="button" class="link-btn forgot-link" data-account="forgot">Forgot password?</button>
         </form>`;
     openOverlay($('accountModal'));
     setTimeout(() => body.querySelector('input')?.focus(), 50);
@@ -885,15 +1116,30 @@
             <div class="top"><span>#${o.number}</span><span>${money(o.total)}</span></div>
             <div class="meta">${new Date(o.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${o.items.reduce((n, i) => n + i.qty, 0)} item(s)</div>
             <div><span class="status-pill">${ORDER_STATUS_LABELS[o.status] || o.status}</span> <span class="meta">${paymentText(o)}</span></div>
+            ${o.pointsEarned ? `<div class="meta">⭐ You earned ${o.pointsEarned} points</div>` : ''}
             ${orderTracker(o)}
+            ${o.status === 'new' && o.paymentStatus !== 'paid' ? `<button type="button" class="link-btn cancel-order" data-cancel-order="${escapeHtml(o.id)}" data-number="${o.number}">Cancel this order</button>` : ''}
           </div>`
           )
           .join('')
       : '<p class="acc-note">No orders yet.</p>';
   }
 
+  async function refreshUser() {
+    if (!state.user) return;
+    try {
+      state.user = (await jsonFetch('/api/account', null, 'GET')).user;
+    } catch {}
+  }
+
   function afterLogin(user) {
+    // Items saved before logging in are added to the account's wishlist
+    const local = state.wishlist;
     state.user = user;
+    state.wishlist = [...new Set([...(user.wishlist || []), ...local])];
+    if (state.wishlist.length !== (user.wishlist || []).length) saveWishlist();
+    renderWishCount();
+    renderGrid();
     updateAccountUI();
     fillCheckoutFromUser();
     closeOverlay($('accountModal'));
@@ -918,10 +1164,40 @@
   });
 
   $('accountBody').addEventListener('click', async (e) => {
+    const cancel = e.target.closest('[data-cancel-order]');
+    if (cancel) {
+      if (!confirm(`Cancel order #${cancel.dataset.number}?`)) return;
+      try {
+        await jsonFetch(`/api/account/orders/${cancel.dataset.cancelOrder}/cancel`);
+        toast('Your order is cancelled');
+        openAccount('profile');
+      } catch (err) {
+        toast(err.message);
+      }
+      return;
+    }
+    const del = e.target.closest('[data-delete-address]');
+    if (del) {
+      if (!confirm('Delete this address?')) return;
+      const list = (state.user.addresses || []).filter((_, i) => i !== Number(del.dataset.deleteAddress));
+      try {
+        state.user.addresses = await jsonFetch('/api/account/addresses', { addresses: list }, 'PUT');
+        openAccount('profile');
+      } catch (err) {
+        toast(err.message);
+      }
+      return;
+    }
     if (!e.target.closest('[data-logout]')) return;
     await fetch('/api/account/logout', { method: 'POST' }).catch(() => {});
     state.user = null;
     clearCustomerDetails();
+    state.wishlist = [];
+    try {
+      localStorage.removeItem('wishlist');
+    } catch {}
+    renderWishCount();
+    renderGrid();
     updateAccountUI();
     closeOverlay($('accountModal'));
     toast('You are logged out');
@@ -957,6 +1233,29 @@
           toast('Password updated');
           openAccount('profile');
           break;
+        case 'forgot':
+          await jsonFetch('/api/account/forgot', data);
+          form.outerHTML = `<div class="earn-done"><div class="check">✓</div><p><strong>Request sent.</strong> If an account exists with these details, we will contact you on your mobile number with a new password.</p>${
+            state.settings.social?.whatsapp ? `<a class="btn btn-wa btn-block" href="${escapeHtml(whatsappLink('Hi! I forgot my account password. Please help me reset it.'))}" target="_blank" rel="noopener"><span class="icon">${ICONS.whatsapp}</span> Message us on WhatsApp</a>` : ''
+          }</div>`;
+          return;
+        case 'address': {
+          const list = [...(state.user.addresses || [])];
+          const entry = { ...(list[Number(form.dataset.index)] || {}), label: data.label, address: data.address, city: data.city };
+          if (form.dataset.index === 'new') list.push(entry);
+          else list[Number(form.dataset.index)] = entry;
+          state.user.addresses = await jsonFetch('/api/account/addresses', { addresses: list }, 'PUT');
+          toast('Address saved');
+          if (state.afterLogin === 'checkout') {
+            // Came from checkout: go back and use the new address
+            state.afterLogin = null;
+            checkoutForm.address.value = entry.address;
+            checkoutForm.city.value = entry.city;
+            closeOverlay($('accountModal'));
+            openCart('details');
+          } else openAccount('profile');
+          break;
+        }
       }
     } catch (err) {
       errorEl.textContent = err.message;
@@ -992,7 +1291,14 @@
   function openPage(key) {
     const body = $('pageBody');
     const pages = state.content.pages || {};
-    if (key === 'size-guide') {
+    if (key === 'wishlist') {
+      const items = state.wishlist.map((id) => state.products.find((p) => p.id === id)).filter(Boolean);
+      body.innerHTML = `<h2 id="pageTitle">My wishlist ♥</h2>${
+        items.length
+          ? `<p class="acc-note">${items.length} saved item(s).${state.user ? '' : ' <button type="button" class="link-btn" data-account="login">Log in</button> to see them on all your devices.'}</p><div class="grid wish-grid">${items.map(cardHtml).join('')}</div>`
+          : '<p class="acc-note">Nothing saved yet. Tap ♡ on any product to save it here.</p>'
+      }`;
+    } else if (key === 'size-guide') {
       const g = state.content.sizeGuide || {};
       body.innerHTML = `<h2 id="pageTitle">Size guide</h2>${pageImage(g.image, 'Size guide')}<div class="rich">${richText(g.text)}</div>`;
     } else if (key === 'track') {
@@ -1035,8 +1341,21 @@
     if (location.hash !== `#${key}`) history.replaceState(null, '', `#${key}`);
   }
 
+  $('pageBody').addEventListener('click', (e) => {
+    const card = e.target.closest('.wish-grid .card');
+    if (!card) return;
+    closeOverlay($('pageModal'));
+    openProduct(card.dataset.id);
+  });
+  $('wishBtn').addEventListener('click', () => openPage('wishlist'));
+
   function openPageFromHash() {
     const key = decodeURIComponent(location.hash.slice(1));
+    if (key.startsWith('product/')) {
+      if ($('productModal').hidden) openProduct(key.slice(8));
+      return;
+    }
+    if (key === 'wishlist') return openPage('wishlist');
     if (key && (FOOTER_PAGES.includes(key) || key === 'track' || key === 'size-guide')) openPage(key);
   }
 
@@ -1127,7 +1446,7 @@
   function closeOverlay(el) {
     el.hidden = true;
     if (!document.querySelector('.overlay:not([hidden])')) document.body.style.overflow = '';
-    if (el.id === 'pageModal' && location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if ((el.id === 'pageModal' || el.id === 'productModal') && location.hash) history.replaceState(null, '', location.pathname + location.search);
   }
   document.querySelectorAll('.overlay').forEach((overlay) => {
     overlay.addEventListener('click', (e) => {
@@ -1190,7 +1509,10 @@
   });
   $('backToBag').addEventListener('click', () => setStep('bag'));
   checkoutForm.addEventListener('submit', placeOrder);
-  checkoutForm.addEventListener('change', (e) => e.target.name === 'paymentMethod' && updatePayMethod());
+  checkoutForm.addEventListener('change', (e) => {
+    if (e.target.name === 'paymentMethod') updatePayMethod();
+    if (e.target.name === 'usePoints') renderTotals();
+  });
   checkoutForm.addEventListener('click', async (e) => {
     const copy = e.target.closest('[data-copy]');
     if (!copy) return;
@@ -1205,7 +1527,7 @@
   checkoutForm.addEventListener('input', (e) => {
     e.target.classList.remove('invalid');
     $('checkoutError').textContent = '';
-    if (e.target.name === 'city') renderTotals();
+    if (['city', 'usePoints'].includes(e.target.name)) renderTotals();
   });
 
   // ---------- boot ----------
@@ -1220,6 +1542,7 @@
       state.delivery = data.delivery || state.delivery;
       state.collections = data.collections || [];
       state.reviews = data.reviews || [];
+      state.loyalty = data.loyalty || {};
       loadCart();
       prefillCustomer();
       renderPayOptions();
@@ -1235,6 +1558,10 @@
         .catch(() => null)
         .then((account) => {
           state.user = account?.user || null;
+          loadWishlist();
+          renderWishCount();
+          renderGrid();
+          renderFilterOptions();
           updateAccountUI();
           fillCheckoutFromUser();
           handleReturn();

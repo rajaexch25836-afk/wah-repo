@@ -319,3 +319,9 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
 
 /* Many tabs: let them wrap instead of hiding behind a scroll */
 .tabs { flex-wrap: wrap; overflow: visible; }
+
+/* Loyalty & password requests */
+.row-3 { grid-template-columns: repeat(3, 1fr); }
+.ustats .pts { display: block; color: #b7791f; font-weight: 700; font-size: 13px; }
+#loyaltyForm { margin-bottom: 16px; }
+@media (max-width: 760px) { .row-3 { grid-template-columns: 1fr; } }

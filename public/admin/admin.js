@@ -60,6 +60,7 @@
     state.products = data.products;
     state.collections = data.collections || [];
     state.delivery = data.delivery || { fee: 0, freeAbove: 0, cityFees: [] };
+    state.loyalty = data.loyalty || { enabled: false, earnPer: 100, pointValue: 1, maxPercent: 50 };
     $('loginView').hidden = true;
     $('appView').hidden = false;
     state.accountSettings = data.accounts || {};
@@ -75,7 +76,11 @@
     renderDelivery();
     if (can('earn')) loadApplications();
     if (can('orders')) loadOrders();
-    if (can('customers')) loadUsers();
+    if (can('customers')) {
+      loadUsers();
+      loadPwRequests();
+      renderLoyalty();
+    }
     if (can('payments')) loadPaymentSettings();
     if (can('reviews')) loadReviews();
     if (can('owner')) {
@@ -440,6 +445,8 @@
               <div class="order-items">
                 ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
                 ${o.deliveryFee ? `<div class="pmeta"><span>Delivery</span><span>${money(o.deliveryFee)}</span></div>` : ''}
+                ${o.pointsDiscount ? `<div class="pmeta"><span>Points used (${o.pointsUsed})</span><span>− ${money(o.pointsDiscount)}</span></div>` : ''}
+                ${o.cancelledBy === 'customer' ? '<div class="pmeta"><b>Cancelled by the customer</b></div>' : ''}
                 <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
                 ${o.safepay?.reference ? `<div class="pmeta">Safepay ref: ${escapeHtml(o.safepay.reference)}</div>` : ''}
                 ${o.manualPayment ? `<div class="pmeta">Paid to: ${escapeHtml([o.manualPayment.name, o.manualPayment.accountTitle, o.manualPayment.accountNumber || o.manualPayment.iban].filter(Boolean).join(' · '))}</div>
@@ -524,6 +531,87 @@
   });
   $('refreshOrdersBtn').addEventListener('click', loadOrders);
 
+  // ---------- loyalty points ----------
+  const loyaltyForm = $('loyaltyForm');
+
+  function renderLoyalty() {
+    const l = state.loyalty;
+    loyaltyForm.enabled.checked = l.enabled;
+    loyaltyForm.earnPer.value = l.earnPer;
+    loyaltyForm.pointValue.value = l.pointValue;
+    loyaltyForm.maxPercent.value = l.maxPercent;
+    loyaltyExample();
+  }
+
+  function loyaltyExample() {
+    const f = loyaltyForm;
+    const pts = Math.floor(5000 / (Number(f.earnPer.value) || 1));
+    $('loyaltyExample').textContent = `Example: an order of ${money(5000)} earns ${pts} points, worth ${money(pts * (Number(f.pointValue.value) || 0))} on the next order.`;
+  }
+  loyaltyForm.addEventListener('input', loyaltyExample);
+
+  loyaltyForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = loyaltyForm;
+    try {
+      state.loyalty = await api('/api/admin/loyalty', {
+        method: 'PUT',
+        body: { enabled: f.enabled.checked, earnPer: Number(f.earnPer.value), pointValue: Number(f.pointValue.value), maxPercent: Number(f.maxPercent.value) },
+      });
+      renderLoyalty();
+      toast('Loyalty points saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // ---------- forgot password requests ----------
+  async function loadPwRequests() {
+    try {
+      const list = await api('/api/admin/password-requests');
+      const open = list.filter((r) => r.status === 'new');
+      $('pwRequestsPanel').hidden = !open.length;
+      $('pwRequests').innerHTML = open
+        .map(
+          (r) => `
+        <div class="urow" data-id="${escapeHtml(r.id)}" data-user="${escapeHtml(r.userId)}">
+          <div class="avatar">🔑</div>
+          <div>
+            <div class="pname">${escapeHtml(r.name)}</div>
+            <div class="pmeta"><a href="tel:${escapeHtml(r.phone)}">${escapeHtml(r.phone)}</a> · ${escapeHtml(r.email)} · ${new Date(r.createdAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+          </div>
+          <div></div>
+          <div class="pactions">
+            <button class="btn btn-sm btn-accent" data-pw="set">Set password</button>
+            <button class="btn btn-sm btn-ghost" data-pw="done">Done</button>
+          </div>
+        </div>`
+        )
+        .join('');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  $('pwRequests').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-pw]');
+    if (!btn) return;
+    const row = e.target.closest('.urow');
+    if (btn.dataset.pw === 'set') {
+      const user = state.users.find((u) => u.id === row.dataset.user);
+      if (!user) return toast('This customer was deleted', true);
+      openUserEditor(user);
+      userForm.newPassword.focus();
+      return;
+    }
+    try {
+      await api(`/api/admin/password-requests/${row.dataset.id}`, { method: 'PATCH', body: { status: 'done' } });
+      loadPwRequests();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
   // ---------- customers ----------
   async function loadUsers() {
     try {
@@ -565,7 +653,7 @@
             <div class="pmeta">${escapeHtml(u.email)} · <a href="tel:${escapeHtml(u.phone)}">${escapeHtml(u.phone)}</a>${u.city ? ` · ${escapeHtml(u.city)}` : ''}</div>
             <div class="pmeta">Joined ${new Date(u.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}${u.lastLoginAt ? ` · Last login ${new Date(u.lastLoginAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })}` : ''}</div>
           </div>
-          <div class="ustats"><b>${u.orderCount} order(s)</b>${money(u.spent)}</div>
+          <div class="ustats"><b>${u.orderCount} order(s)</b>${money(u.spent)}${u.points ? `<span class="pts">⭐ ${u.points} pts</span>` : ''}</div>
           <div class="pactions">
             <button class="btn btn-sm btn-dark" data-user-action="edit">Edit</button>
             <button class="btn btn-sm btn-ghost" data-user-action="block">${u.blocked ? 'Unblock' : 'Block'}</button>
@@ -629,6 +717,7 @@
     userForm.reset();
     USER_FIELDS.forEach((k) => (userForm[k].value = user[k] || ''));
     userForm.blocked.checked = user.blocked;
+    userForm.points.value = user.points || 0;
     $('userMeta').textContent = `${user.orderCount} order(s) · ${money(user.spent)} spent`;
     $('userEditor').hidden = false;
     document.body.style.overflow = 'hidden';
@@ -648,11 +737,18 @@
     const changes = Object.fromEntries(USER_FIELDS.map((k) => [k, userForm[k].value]));
     changes.blocked = userForm.blocked.checked;
     changes.newPassword = userForm.newPassword.value;
+    changes.points = Number(userForm.points.value) || 0;
     $('saveUserBtn').disabled = true;
     try {
       await saveUser(state.editingUser, changes);
       closeUserEditor();
-      toast('Customer saved');
+      if (changes.newPassword) {
+        loadPwRequests();
+        const u = state.editingUser;
+        const wa = u.phone.replace(/\D/g, '').replace(/^0/, '92');
+        const text = `Assalam o Alaikum ${u.firstName}! Your new password for ${state.settings.storeName} is: ${changes.newPassword}\nPlease log in and change it from My account.`;
+        if (confirm('Password saved. Send it to the customer on WhatsApp now?')) window.open(`https://wa.me/${wa}?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+      } else toast('Customer saved');
     } catch (err) {
       toast(err.message, true);
     } finally {

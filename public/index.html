@@ -22,6 +22,7 @@
         <input id="search" type="search" placeholder="Search kurta, jeans, abaya…">
       </label>
       <div class="header-social" id="headerSocial"></div>
+      <button class="wish-head" id="wishBtn" aria-label="My wishlist"><span class="heart">♡</span><span class="wish-count" id="wishCount" hidden>0</span></button>
       <button class="account-btn" id="accountBtn" aria-label="My account"><span class="icon" data-icon="user"></span><span class="account-name" id="accountName">Log in</span></button>
       <button class="cart-btn" id="cartBtn" aria-label="Open bag">
         <span class="icon" data-icon="bag"></span>
@@ -63,6 +64,8 @@
       <div class="container">
         <div class="shop-head">
           <h2>Shop the collection</h2>
+          <div class="shop-tools">
+          <button class="filter-btn" id="filterBtn" aria-expanded="false" aria-controls="filterPanel">⚙ Filters <span class="filter-count" id="filterCount" hidden></span></button>
           <select id="sort" aria-label="Sort products">
             <option value="featured">Featured</option>
             <option value="new">Newest</option>
@@ -70,6 +73,15 @@
             <option value="high">Price: high to low</option>
             <option value="sale">Biggest discount</option>
           </select>
+          </div>
+        </div>
+        <div class="filter-panel" id="filterPanel" hidden>
+          <div class="filter-group"><div class="opt-label">Size</div><div class="opts" id="filterSizes"></div></div>
+          <div class="filter-group"><div class="opt-label">Colour</div><div class="opts" id="filterColors"></div></div>
+          <div class="filter-group"><div class="opt-label">Price</div>
+            <div class="price-range"><input type="number" id="priceMin" min="0" placeholder="Min" inputmode="numeric"><span>–</span><input type="number" id="priceMax" min="0" placeholder="Max" inputmode="numeric"></div>
+          </div>
+          <button type="button" class="link-btn" id="clearFilters">Clear filters</button>
         </div>
         <div class="chips" id="chips" role="tablist"></div>
         <div class="grid" id="grid"></div>
@@ -139,10 +151,12 @@
         </div>
         <label>Contact number <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="03001234567" maxlength="20" required></label>
         <label>Email <small>(optional)</small> <input name="email" type="email" autocomplete="email" maxlength="120"></label>
+        <div class="saved-addresses" id="savedAddresses"></div>
         <label>Full address <textarea name="address" rows="3" autocomplete="street-address" placeholder="House #, street, area / sector" maxlength="300" required></textarea></label>
         <label>City <input name="city" autocomplete="address-level2" maxlength="60" required></label>
         <label>Order notes <small>(optional)</small> <textarea name="notes" rows="2" placeholder="Landmark, delivery time, etc." maxlength="300"></textarea></label>
 
+        <label class="points-use" id="pointsUse" hidden><input type="checkbox" name="usePoints"> <span id="pointsUseText"></span></label>
         <h3>Payment</h3>
         <div class="pay-options" id="payOptions"></div>
         <div class="manual-pay" id="manualPay" hidden>
@@ -158,6 +172,7 @@
         <div class="sum-rows" id="sumRows" hidden>
           <div><span>Subtotal</span><span id="cartSubtotal"></span></div>
           <div><span>Delivery <small id="deliveryNote"></small></span><span id="cartDelivery"></span></div>
+          <div id="pointsRow" hidden><span>Points discount</span><span id="cartPoints"></span></div>
         </div>
         <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
         <p class="free-hint" id="freeHint" hidden></p>
