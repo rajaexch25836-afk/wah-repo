@@ -325,3 +325,67 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
 .ustats .pts { display: block; color: #b7791f; font-weight: 700; font-size: 13px; }
 #loyaltyForm { margin-bottom: 16px; }
 @media (max-width: 760px) { .row-3 { grid-template-columns: 1fr; } }
+
+/* Stock */
+.low-stock-form { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 8px; }
+.low-stock-form label { flex-direction: row; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; }
+.low-stock-form input { width: 80px; padding: 6px 10px; }
+.pmeta b.low { color: #b7791f; }
+.stock-grid { overflow-x: auto; }
+.stock-grid table { border-collapse: collapse; font-size: 13px; }
+.stock-grid th { text-align: left; padding: 4px 8px; font-weight: 700; white-space: nowrap; }
+.stock-grid td { padding: 3px; }
+.stock-grid input { width: 72px; padding: 6px 8px; text-align: center; }
+
+/* Courier on orders */
+.courier-edit { border-top: 1px solid var(--line); padding: 8px 16px; font-size: 14px; }
+.courier-edit summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.courier-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.courier-fields select { width: auto; }
+.courier-fields input { flex: 1; min-width: 160px; padding: 6px 10px; }
+
+/* Coupons */
+.coupon-list { display: grid; gap: 10px; }
+.coupon-card { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 1.1fr .8fr auto auto auto; gap: 10px; align-items: end; padding: 12px; border: 1.5px solid var(--line); border-radius: 12px; }
+.coupon-card.off { background: var(--bg); }
+.coupon-card label { font-size: 12px; }
+.coupon-card input, .coupon-card select { padding: 7px 9px; }
+.coupon-card [data-cp=code] { text-transform: uppercase; font-weight: 700; letter-spacing: .5px; }
+.cp-value { display: flex; gap: 4px; }
+.cp-value select { width: 64px; }
+.cp-meta { display: grid; font-size: 12px; color: var(--muted); padding-bottom: 6px; white-space: nowrap; }
+.cp-status { font-weight: 800; color: var(--ink); }
+.coupon-card .switch { padding-bottom: 8px; }
+
+/* Sales report */
+.report-bar { align-items: center; }
+.report-bar select { width: auto; }
+.report-bar .hint { margin: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.chart { position: relative; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid { stroke: #ece6dd; stroke-width: 1; }
+.chart .grid.base { stroke: #cfc6ba; }
+.chart .tick { font-size: 11px; fill: var(--muted); }
+.chart .col { fill: var(--accent); }
+.chart .hit { fill: transparent; }
+.chart .col-g.on .col { fill: var(--accent-dark); }
+.chart .col-g.on .hit { fill: rgba(0, 0, 0, .03); }
+.chart-tip { position: absolute; pointer-events: none; background: var(--ink); color: #fff; border-radius: 8px; padding: 6px 10px; font-size: 12px; display: grid; gap: 1px; white-space: nowrap; transform: translateY(-100%); }
+.chart-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.chart-table th, .chart-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.bar-list { display: grid; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: minmax(80px, 1.2fr) 2fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.bar-track { height: 12px; }
+.bar { display: block; height: 12px; background: var(--accent); border-radius: 0 4px 4px 0; }
+.bar-value { font-weight: 700; white-space: nowrap; text-align: right; }
+.bar-value small { color: var(--muted); font-weight: 500; margin-left: 4px; }
+
+@media (max-width: 980px) {
+  .coupon-card { grid-template-columns: 1fr 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .coupon-card { grid-template-columns: 1fr 1fr; }
+  .bar-row { grid-template-columns: 1fr 1.2fr auto; }
+}

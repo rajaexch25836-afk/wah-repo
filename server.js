@@ -95,6 +95,8 @@ function withDefaults(data) {
   // Loyalty points: earn 1 point per `earnPer` spent (after delivery), 1 point = `pointValue` off
   data.loyalty = { enabled: false, earnPer: 100, pointValue: 1, maxPercent: 50, ...data.loyalty };
   data.passwordRequests ||= []; // "Forgot password" requests for the admin
+  data.coupons ||= []; // discount codes like EID20
+  data.stockSettings = { lowAt: 3, ...data.stockSettings }; // "low stock" warning at or below this
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -132,13 +134,43 @@ function safeUrl(value) {
   }
 }
 
+// ---------- Stock ----------
+// Stock is kept per size + colour, e.g. { "M|Black": 5 }. A product without sizes or colours uses "|".
+const variantKey = (size = '', color = '') => `${size}|${color}`;
+
+function variantKeys(p) {
+  const sizes = p.sizes?.length ? p.sizes : [''];
+  const colors = p.colors?.length ? p.colors : [''];
+  return sizes.flatMap((sz) => colors.map((c) => variantKey(sz, c)));
+}
+
+const stockOf = (p, size, color) => (p.trackStock ? Math.max(0, Number(p.stock?.[variantKey(size, color)]) || 0) : Infinity);
+const totalStock = (p) => variantKeys(p).reduce((n, k) => n + (Number(p.stock?.[k]) || 0), 0);
+
+function sanitizeStock(input, product) {
+  const out = {};
+  for (const key of variantKeys(product)) out[key] = Math.max(0, Math.floor(Number(input?.[key]) || 0));
+  return out;
+}
+
+// Takes the ordered items out of stock (or puts them back with sign = 1) and updates "Sold out".
+function moveStock(items, sign) {
+  for (const i of items) {
+    const p = store.products.find((x) => x.id === i.productId);
+    if (!p?.trackStock) continue;
+    const key = variantKey(i.size, i.color);
+    p.stock[key] = Math.max(0, (Number(p.stock[key]) || 0) + sign * i.qty);
+    p.soldOut = totalStock(p) === 0;
+  }
+}
+
 function sanitizeProduct(input, existing = {}) {
   const price = num(input.price);
   const salePrice = input.salePrice === '' || input.salePrice == null ? null : num(input.salePrice);
   const images = Array.isArray(input.images)
     ? input.images.filter(storage.isUploadUrl).slice(0, 12)
     : existing.images || [];
-  return {
+  const product = {
     ...existing,
     name: str(input.name, 120) || existing.name || 'Untitled product',
     description: str(input.description, 3000),
@@ -153,6 +185,11 @@ function sanitizeProduct(input, existing = {}) {
     images,
     updatedAt: new Date().toISOString(),
   };
+  // With stock counting on, "Sold out" follows the stock
+  product.trackStock = Boolean(input.trackStock);
+  product.stock = sanitizeStock(input.stock, product);
+  if (product.trackStock) product.soldOut = totalStock(product) === 0;
+  return product;
 }
 
 function safeEqual(a, b) {
@@ -310,6 +347,18 @@ function setOrderStatus(order, status) {
   order.status = status;
   order.statusHistory = [...(order.statusHistory || []), { status, at: new Date().toISOString() }];
   applyLoyalty(order);
+  // A cancelled, rejected or returned order gives back its stock and its coupon use
+  if (LOST_STATUSES.includes(status)) {
+    if (order.stockTaken && !order.stockRestored) {
+      moveStock(order.items, 1);
+      order.stockRestored = true;
+    }
+    const c = order.coupon && !order.couponRestored && store.coupons.find((x) => x.code === order.coupon.code);
+    if (c) {
+      c.used = Math.max(0, c.used - 1);
+      order.couponRestored = true;
+    }
+  }
 }
 // Orders in these states do not count towards sales
 const LOST_STATUSES = ['cancelled', 'returned', 'rejected'];
@@ -352,7 +401,33 @@ function buildOrderItems(lines) {
     if (color && !product.colors.includes(color)) return [null, `Please pick a colour for "${product.name}" again`];
     items.push({ productId: product.id, name: product.name, size, color, qty, price: finalPrice(product), image: product.images?.[0] || '' });
   }
+  // Enough stock for everything in the bag (the same item may be on several lines)
+  const wanted = new Map();
+  for (const i of items) {
+    const key = `${i.productId}|${variantKey(i.size, i.color)}`;
+    wanted.set(key, (wanted.get(key) || 0) + i.qty);
+  }
+  for (const i of items) {
+    const p = store.products.find((x) => x.id === i.productId);
+    const left = stockOf(p, i.size, i.color);
+    if (wanted.get(`${i.productId}|${variantKey(i.size, i.color)}`) > left) {
+      const which = [i.size, i.color].filter(Boolean).join(', ');
+      return [null, left ? `Only ${left} left of "${i.name}"${which ? ` (${which})` : ''}. Please lower the quantity.` : `"${i.name}"${which ? ` (${which})` : ''} is out of stock. Please remove it from your bag.`];
+    }
+  }
   return [items, null];
+}
+
+// ---------- Coupons ----------
+// Returns [coupon, discount, error]. The discount is on the items only (not delivery).
+function checkCoupon(code, subtotal) {
+  const c = store.coupons.find((x) => x.code === String(code || '').trim().toUpperCase());
+  if (!c || !c.active) return [null, 0, 'This coupon code is not valid'];
+  if (c.expiresAt && Date.now() > new Date(`${c.expiresAt}T23:59:59+05:00`).getTime()) return [null, 0, 'This coupon has expired'];
+  if (c.maxUses && c.used >= c.maxUses) return [null, 0, 'This coupon has been fully used'];
+  if (c.minOrder && subtotal < c.minOrder) return [null, 0, `This coupon works on orders of Rs. ${c.minOrder.toLocaleString('en-PK')} or more`];
+  const discount = c.type === 'percent' ? Math.floor((subtotal * c.value) / 100) : Math.min(c.value, subtotal);
+  return [c, discount, null];
 }
 
 // Delivery charge: free above a set amount, else the city's own charge, else the normal charge.
@@ -380,6 +455,9 @@ function publicOrder(o) {
     items: o.items,
     subtotal: o.subtotal ?? o.total,
     deliveryFee: o.deliveryFee || 0,
+    couponCode: o.coupon?.code || '',
+    couponDiscount: o.couponDiscount || 0,
+    courier: o.courier?.trackingNo ? o.courier : undefined,
     pointsUsed: o.pointsUsed || 0,
     pointsDiscount: o.pointsDiscount || 0,
     pointsEarned: o.pointsEarned || 0,
@@ -650,6 +728,7 @@ const STAFF_PERMISSIONS = {
   content: 'Store settings, pages & popup',
   reviews: 'Reviews',
   earn: 'Earn with us forms',
+  reports: 'Sales report',
 };
 
 // Password was right, waiting for the Google Authenticator code (5 minutes).
@@ -801,6 +880,8 @@ app.get('/api/store', (req, res) => {
     content: store.content,
     delivery: store.deliverySettings,
     loyalty: store.loyalty,
+    stock: store.stockSettings,
+    hasCoupons: store.coupons.some((c) => c.active),
     collections: store.collections,
     reviews: store.reviews.filter((r) => r.status === 'approved').map(publicReview),
   });
@@ -999,7 +1080,14 @@ app.post('/api/orders', async (req, res, next) => {
 
     const subtotal = Math.round(items.reduce((n, i) => n + i.price * i.qty, 0) * 100) / 100;
     const deliveryFee = deliveryFeeFor(customer.city, subtotal);
-    const redeem = req.body.usePoints && user ? pointsDiscount(user, subtotal) : { points: 0, discount: 0 };
+    let coupon = null;
+    let couponDiscount = 0;
+    if (str(req.body.coupon, 30)) {
+      let error;
+      [coupon, couponDiscount, error] = checkCoupon(req.body.coupon, subtotal);
+      if (error) return res.status(400).json({ error });
+    }
+    const redeem = req.body.usePoints && user ? pointsDiscount(user, subtotal - couponDiscount) : { points: 0, discount: 0 };
     const order = {
       id: crypto.randomBytes(8).toString('hex'),
       number: store.nextOrderNumber,
@@ -1009,9 +1097,11 @@ app.post('/api/orders', async (req, res, next) => {
       items,
       subtotal,
       deliveryFee,
+      coupon: coupon ? { code: coupon.code, discount: couponDiscount } : undefined,
+      couponDiscount,
       pointsUsed: redeem.points,
       pointsDiscount: redeem.discount,
-      total: Math.round((subtotal + deliveryFee - redeem.discount) * 100) / 100,
+      total: Math.round((subtotal + deliveryFee - couponDiscount - redeem.discount) * 100) / 100,
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'unpaid' : 'pending',
       status: 'new',
@@ -1038,6 +1128,9 @@ app.post('/api/orders', async (req, res, next) => {
     }
 
     if (redeem.points) addPoints(user, -redeem.points, `Used on order #${order.number}`);
+    if (coupon) coupon.used += 1;
+    moveStock(items, -1);
+    order.stockTaken = true;
     store.nextOrderNumber += 1;
     store.orders.unshift(order);
     save();
@@ -1371,7 +1464,7 @@ app.all('/api/payments/easypaisa/status/:id/:token', express.urlencoded({ extend
 });
 
 // Admin: orders
-app.get('/api/admin/orders', allow('orders'), (req, res) => {
+app.get('/api/admin/orders', allow('orders', 'reports'), (req, res) => {
   res.json(store.orders.map(({ accessToken, ...o }) => o));
 });
 
@@ -1397,6 +1490,10 @@ app.patch('/api/admin/orders/:id', allow('orders'), (req, res) => {
   if (!order) return res.status(404).json({ error: 'Order not found' });
   if (ORDER_STATUSES.includes(req.body.status)) setOrderStatus(order, req.body.status);
   if (PAYMENT_STATUSES.includes(req.body.paymentStatus)) order.paymentStatus = req.body.paymentStatus;
+  if (req.body.courier) {
+    const c = req.body.courier;
+    order.courier = { name: str(c.name, 40), trackingNo: str(c.trackingNo, 60), link: safeUrl(c.link) };
+  }
   order.updatedAt = new Date().toISOString();
   save();
   const { accessToken, ...rest } = order;
@@ -1704,6 +1801,53 @@ app.patch('/api/admin/password-requests/:id', allow('customers'), (req, res) => 
   res.json(r);
 });
 
+// Coupon check at checkout (the order checks it again)
+app.post('/api/coupons/check', (req, res) => {
+  const key = `coupon:${req.ip}`;
+  if (loginBlocked(key)) return res.status(429).json({ error: 'Too many tries. Please wait 15 minutes.' });
+  const [coupon, discount, error] = checkCoupon(req.body.code, num(req.body.subtotal) ?? 0);
+  if (error) {
+    if (!store.coupons.some((c) => c.code === String(req.body.code || '').trim().toUpperCase())) loginFailed(key); // only guessing counts
+    return res.status(400).json({ error });
+  }
+  res.json({ code: coupon.code, type: coupon.type, value: coupon.value, minOrder: coupon.minOrder, discount });
+});
+
+// Admin: coupons
+app.get('/api/admin/coupons', allow('payments'), (req, res) => res.json(store.coupons));
+
+app.put('/api/admin/coupons', allow('payments'), (req, res) => {
+  const input = Array.isArray(req.body.coupons) ? req.body.coupons.slice(0, 100) : [];
+  const list = input.map((c) => {
+    const old = store.coupons.find((x) => x.id === c?.id);
+    return {
+      id: old?.id || crypto.randomBytes(6).toString('hex'),
+      code: str(c?.code, 30).toUpperCase().replace(/[^A-Z0-9_-]/g, ''),
+      type: c?.type === 'fixed' ? 'fixed' : 'percent',
+      value: num(c?.value) ?? 0,
+      minOrder: num(c?.minOrder) ?? 0,
+      expiresAt: /^\d{4}-\d{2}-\d{2}$/.test(c?.expiresAt) ? c.expiresAt : '',
+      maxUses: Math.floor(num(c?.maxUses) ?? 0),
+      used: old?.used || 0,
+      active: c?.active !== false,
+      createdAt: old?.createdAt || new Date().toISOString(),
+    };
+  });
+  const bad = list.find((c) => c.code.length < 3 || !(c.value > 0) || (c.type === 'percent' && c.value > 100));
+  if (bad) return res.status(400).json({ error: 'Every coupon needs a code (3+ letters/numbers) and a discount (percent 1–100, or a fixed amount)' });
+  if (new Set(list.map((c) => c.code)).size !== list.length) return res.status(400).json({ error: 'Two coupons have the same code' });
+  store.coupons = list;
+  save();
+  res.json(store.coupons);
+});
+
+// Admin: low stock warning level
+app.put('/api/admin/stock-settings', allow('products'), (req, res) => {
+  store.stockSettings = { lowAt: Math.max(0, Math.floor(num(req.body.lowAt) ?? 3)) };
+  save();
+  res.json(store.stockSettings);
+});
+
 // Admin: customers
 app.get('/api/admin/users', allow('customers'), (req, res) => {
   res.json(
@@ -1801,6 +1945,26 @@ app.use('/uploads', express.static(storage.UPLOAD_DIR, { maxAge: '30d' }));
 // no-cache: the browser may keep a copy but must check with the server first,
 // so updated pages, scripts and styles show up right after the server is updated.
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
+// "Add to Home screen": the store opens like an app, with its own name and icon
+app.get('/manifest.webmanifest', async (req, res) => {
+  const data = await storage.loadData().catch(() => null); // outside /api, so read the store here
+  const name = data?.settings?.storeName || 'Store';
+  res.type('application/manifest+json').json({
+    name,
+    short_name: name.slice(0, 12),
+    description: data?.settings?.tagline || '',
+    start_url: '/?source=app',
+    scope: '/',
+    display: 'standalone',
+    background_color: '#f6f1ea',
+    theme_color: '#1d1a17',
+    icons: [
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  });
+});
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html')));
 
 app.use((err, req, res, next) => {

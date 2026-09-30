@@ -10,6 +10,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#1d1a17">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
   <div class="announce" id="announce" hidden><div class="announce-track" id="announceTrack"></div></div>
@@ -122,6 +127,14 @@
     <div class="container footer-bottom">© <span id="year"></span> <span id="footerName"></span>. All rights reserved.</div>
   </footer>
 
+  <!-- Install as an app -->
+  <div class="install-bar" id="installBar" hidden>
+    <img src="/icons/icon-192.png" alt="" width="40" height="40">
+    <div><strong>Get our app</strong><span id="installText">Add the store to your home screen — opens in one tap.</span></div>
+    <button class="btn btn-dark btn-sm-store" id="installBtn">Install</button>
+    <button class="install-close" id="installClose" aria-label="Not now">✕</button>
+  </div>
+
   <a class="wa-float" id="waFloat" target="_blank" rel="noopener" hidden aria-label="Chat on WhatsApp"><span class="icon" data-icon="whatsapp"></span></a>
 
   <!-- Product detail -->
@@ -157,6 +170,12 @@
         <label>Order notes <small>(optional)</small> <textarea name="notes" rows="2" placeholder="Landmark, delivery time, etc." maxlength="300"></textarea></label>
 
         <label class="points-use" id="pointsUse" hidden><input type="checkbox" name="usePoints"> <span id="pointsUseText"></span></label>
+        <div class="coupon-box" id="couponBox" hidden>
+          <label>Coupon code <small>(optional)</small>
+            <span class="coupon-row"><input name="coupon" maxlength="30" autocomplete="off" autocapitalize="characters" placeholder="e.g. EID20"><button type="button" class="btn btn-dark" id="applyCoupon">Apply</button></span>
+          </label>
+          <p class="coupon-msg" id="couponMsg"></p>
+        </div>
         <h3>Payment</h3>
         <div class="pay-options" id="payOptions"></div>
         <div class="manual-pay" id="manualPay" hidden>
@@ -172,6 +191,7 @@
         <div class="sum-rows" id="sumRows" hidden>
           <div><span>Subtotal</span><span id="cartSubtotal"></span></div>
           <div><span>Delivery <small id="deliveryNote"></small></span><span id="cartDelivery"></span></div>
+          <div id="couponRow" hidden><span>Coupon <small id="couponCodeLabel"></small></span><span id="cartCoupon"></span></div>
           <div id="pointsRow" hidden><span>Points discount</span><span id="cartPoints"></span></div>
         </div>
         <div class="total-row"><span>Total</span><strong id="cartTotal"></strong></div>
