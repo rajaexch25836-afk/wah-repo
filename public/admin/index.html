@@ -55,11 +55,13 @@
       <div class="brand">Dashboard <small class="who" id="whoAmI"></small></div>
       <nav class="tabs">
         <button class="tab active" data-tab="orders" data-perm="orders">Orders <span class="tab-badge" id="newOrdersBadge" hidden></span></button>
+        <button class="tab" data-tab="reports" data-perm="reports">Sales report</button>
         <button class="tab" data-tab="products" data-perm="products">Products</button>
         <button class="tab" data-tab="collections" data-perm="products">Collections</button>
         <button class="tab" data-tab="reviews" data-perm="reviews">Reviews <span class="tab-badge" id="newReviewsBadge" hidden></span></button>
         <button class="tab" data-tab="customers" data-perm="customers">Customers</button>
         <button class="tab" data-tab="payments" data-perm="payments">Payments &amp; Delivery</button>
+        <button class="tab" data-tab="coupons" data-perm="payments">Coupons</button>
         <button class="tab" data-tab="settings" data-perm="content">Store &amp; Social</button>
         <button class="tab" data-tab="pages" data-perm="content">Pages &amp; Popup</button>
         <button class="tab" data-tab="earn" data-perm="earn">Earn with us <span class="tab-badge" id="newEarnBadge" hidden></span></button>
@@ -107,11 +109,53 @@
             <option value="sale">On sale</option>
             <option value="sold">Sold out</option>
             <option value="available">Available</option>
+            <option value="low">Low stock</option>
           </select>
           <button class="btn btn-accent" id="addProductBtn">+ Add product</button>
         </div>
+        <form class="low-stock-form" id="lowStockForm">
+          <label>Warn me when stock is at or below <input name="lowAt" type="number" min="0" step="1"></label>
+          <button class="btn btn-sm btn-ghost" type="submit">Save</button>
+        </form>
         <p class="hint" id="reorderHint">Drag <b>⠿</b> (or use ↑ ↓) to set the order products show in on the store (“Featured”).</p>
         <div class="product-list" id="productList"></div>
+      </section>
+
+      <!-- Sales report -->
+      <section id="tab-reports" hidden>
+        <div class="toolbar report-bar">
+          <select id="reportRange" aria-label="Period">
+            <option value="today">Today</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="month">This month</option>
+            <option value="all">All time</option>
+          </select>
+          <button class="btn btn-ghost" id="refreshReportBtn">Refresh</button>
+          <span class="hint">Sales count every order except cancelled, rejected and returned ones.</span>
+        </div>
+        <div class="stats" id="reportStats"></div>
+        <div class="panel">
+          <div class="chart-head"><h2 id="chartTitle">Sales per day</h2><button class="link-btn" id="chartTableBtn" type="button">Show as table</button></div>
+          <div class="chart" id="salesChart"></div>
+        </div>
+        <div class="settings">
+          <div class="panel"><h2>Best-selling products</h2><div class="bar-list" id="topProducts"></div></div>
+          <div class="panel"><h2>Orders by city</h2><div class="bar-list" id="topCities"></div></div>
+        </div>
+      </section>
+
+      <!-- Coupons -->
+      <section id="tab-coupons" hidden>
+        <div class="panel">
+          <h2>Coupon codes</h2>
+          <p class="hint">Customers type the code at checkout. Percent (e.g. 20% off) or a fixed amount (e.g. Rs. 500 off), on the items only (not delivery). Leave “Last day” empty for no end date and “Max uses” 0 for unlimited.</p>
+          <div class="coupon-list" id="couponList"></div>
+          <div class="btn-row">
+            <button class="btn btn-ghost" type="button" id="addCouponBtn">+ New coupon</button>
+            <button class="btn btn-accent" type="button" id="saveCouponsBtn">Save coupons</button>
+          </div>
+        </div>
       </section>
 
       <!-- Collections -->
@@ -432,6 +476,11 @@
         <div class="field-block">
           <label>Colours <small>Tap colours below, or type your own names separated by commas</small><input name="colors" id="colorsInput"></label>
           <div class="color-chips" id="colorChips"></div>
+        </div>
+        <div class="field-block stock-block">
+          <label class="switch"><input type="checkbox" name="trackStock" id="trackStock"><span></span> Count stock for this product</label>
+          <p class="hint" id="stockHelp">Enter how many pieces you have of each size and colour. When everything reaches 0 the product shows “Sold out” by itself.</p>
+          <div class="stock-grid" id="stockGrid"></div>
         </div>
         <div class="switches">
           <label class="switch"><input type="checkbox" name="onSale"><span></span> On sale</label>

@@ -61,6 +61,8 @@
     state.collections = data.collections || [];
     state.delivery = data.delivery || { fee: 0, freeAbove: 0, cityFees: [] };
     state.loyalty = data.loyalty || { enabled: false, earnPer: 100, pointValue: 1, maxPercent: 50 };
+    state.stockSettings = data.stock || { lowAt: 3 };
+    $('lowStockForm').lowAt.value = state.stockSettings.lowAt;
     $('loginView').hidden = true;
     $('appView').hidden = false;
     state.accountSettings = data.accounts || {};
@@ -75,13 +77,16 @@
     renderCollections();
     renderDelivery();
     if (can('earn')) loadApplications();
-    if (can('orders')) loadOrders();
+    if (can('orders') || can('reports')) loadOrders();
     if (can('customers')) {
       loadUsers();
       loadPwRequests();
       renderLoyalty();
     }
-    if (can('payments')) loadPaymentSettings();
+    if (can('payments')) {
+      loadPaymentSettings();
+      loadCoupons();
+    }
     if (can('reviews')) loadReviews();
     if (can('owner')) {
       loadNotify();
@@ -289,13 +294,14 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      ['orders', 'products', 'collections', 'reviews', 'customers', 'payments', 'settings', 'pages', 'earn', 'staff', 'security'].forEach(
+      ['orders', 'reports', 'products', 'collections', 'reviews', 'customers', 'payments', 'coupons', 'settings', 'pages', 'earn', 'staff', 'security'].forEach(
         (name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name)
       );
       if (tab.dataset.tab === 'security') loadSecurity();
       if (tab.dataset.tab === 'earn') loadApplications();
       if (tab.dataset.tab === 'reviews') loadReviews();
       if (tab.dataset.tab === 'collections') renderCollections();
+      if (tab.dataset.tab === 'reports') loadOrders().then(renderReport);
     })
   );
 
@@ -430,6 +436,16 @@
               </select>
               <button class="btn btn-sm btn-ghost" data-print-slip title="Print packing slip">🖨 Slip</button>
             </header>
+            <details class="courier-edit"${o.courier?.trackingNo ? '' : ''}>
+              <summary>🚚 Courier${o.courier?.trackingNo ? `: <b>${escapeHtml(o.courier.name)} · ${escapeHtml(o.courier.trackingNo)}</b>` : ' — add tracking number'}</summary>
+              <div class="courier-fields">
+                <select data-courier="name" aria-label="Courier">${COURIERS.map((c) => `<option${o.courier?.name === c ? ' selected' : ''}>${c}</option>`).join('')}</select>
+                <input data-courier="trackingNo" placeholder="Tracking number" maxlength="60" value="${escapeHtml(o.courier?.trackingNo || '')}">
+                <input data-courier="link" type="url" placeholder="Tracking link (optional)" value="${escapeHtml(o.courier?.link || '')}">
+                <button class="btn btn-sm btn-dark" data-courier-save>Save</button>
+                ${o.courier?.trackingNo ? `<a class="btn btn-sm btn-ghost" target="_blank" rel="noopener" href="https://wa.me/${escapeHtml(waNumber)}?text=${encodeURIComponent(`Assalam o Alaikum ${c.firstName}! Your order #${o.number} from ${state.settings.storeName} has been sent with ${o.courier.name}. Tracking number: ${o.courier.trackingNo}${o.courier.link ? `\nTrack: ${o.courier.link}` : ''}`)}">Send on WhatsApp</a>` : ''}
+              </div>
+            </details>
             <div class="quick-status">
               <span>Mark as:</span>
               ${QUICK_STATUSES.map((st) => `<button class="qs qs-${st}${o.status === st ? ' on' : ''}" data-quick-status="${st}">${STATUS_LABELS[st]}</button>`).join('')}
@@ -445,6 +461,7 @@
               <div class="order-items">
                 ${o.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${[i.size, i.color].filter(Boolean).length ? ` <small>(${[i.size, i.color].filter(Boolean).map(escapeHtml).join(', ')})</small>` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
                 ${o.deliveryFee ? `<div class="pmeta"><span>Delivery</span><span>${money(o.deliveryFee)}</span></div>` : ''}
+                ${o.couponDiscount ? `<div class="pmeta"><span>Coupon ${escapeHtml(o.coupon?.code || '')}</span><span>− ${money(o.couponDiscount)}</span></div>` : ''}
                 ${o.pointsDiscount ? `<div class="pmeta"><span>Points used (${o.pointsUsed})</span><span>− ${money(o.pointsDiscount)}</span></div>` : ''}
                 ${o.cancelledBy === 'customer' ? '<div class="pmeta"><b>Cancelled by the customer</b></div>' : ''}
                 <div class="order-total"><span>Total</span><span>${money(o.total)}</span></div>
@@ -464,6 +481,8 @@
           .join('')
       : `<div class="empty">${all.length ? 'No orders match.' : 'No orders yet. They will show up here when customers check out.'}</div>`;
   }
+
+  const COURIERS = ['TCS', 'Leopards', 'M&P', 'PostEx', 'Trax', 'Call Courier', 'BlueEx', 'Swyft', 'Rider', 'Pakistan Post', 'Other'];
 
   async function updateOrder(id, changes) {
     try {
@@ -489,6 +508,14 @@
   });
 
   $('orderList').addEventListener('click', async (e) => {
+    const courierSave = e.target.closest('[data-courier-save]');
+    if (courierSave) {
+      const box = courierSave.closest('.courier-fields');
+      const courier = Object.fromEntries([...box.querySelectorAll('[data-courier]')].map((el) => [el.dataset.courier, el.value]));
+      if (!courier.trackingNo.trim()) return toast('Please enter the tracking number', true);
+      updateOrder(e.target.closest('.order').dataset.id, { courier });
+      return;
+    }
     if (e.target.closest('[data-print-slip]')) {
       printSlips([state.orders.find((o) => o.id === e.target.closest('.order').dataset.id)]);
       return;
@@ -858,6 +885,7 @@
       [all.filter((p) => !p.soldOut).length, 'Available'],
       [all.filter((p) => p.onSale).length, 'On sale'],
       [all.filter((p) => p.soldOut).length, 'Sold out'],
+      [all.filter(isLowStock).length, 'Low stock'],
     ].map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`).join('');
 
     const q = state.search.toLowerCase();
@@ -865,6 +893,7 @@
       if (state.filter === 'sale' && !p.onSale) return false;
       if (state.filter === 'sold' && !p.soldOut) return false;
       if (state.filter === 'available' && p.soldOut) return false;
+      if (state.filter === 'low' && !isLowStock(p)) return false;
       return !q || `${p.name} ${p.category}`.toLowerCase().includes(q);
     });
 
@@ -887,7 +916,7 @@
             <div class="pthumb" style="${img ? '' : 'background:#c9a3a0'}">${img ? `<img src="${escapeHtml(img)}" alt="">` : escapeHtml(p.name.charAt(0))}</div>
             <div>
               <div class="pname">${escapeHtml(p.name)}</div>
-              <div class="pmeta">${escapeHtml(p.category || 'No category')} · ${p.images?.length || 0} picture(s)</div>
+              <div class="pmeta">${escapeHtml(p.category || 'No category')} · ${p.images?.length || 0} picture(s)${p.trackStock ? ` · <b class="${isLowStock(p) ? 'low' : ''}">${stockTotal(p)} in stock</b>` : ''}</div>
               <div class="pprice">${hasDiscount ? `${money(p.salePrice)}<s>${money(p.price)}</s>` : money(p.price)}</div>
             </div>
             <div class="toggles">
@@ -904,6 +933,46 @@
           .join('')
       : '<div class="empty">No products here yet. Click “+ Add product”.</div>';
   }
+
+  // ---------- stock ----------
+  const stockTotal = (p) => Object.values(p.stock || {}).reduce((n, v) => n + (Number(v) || 0), 0);
+  // Low: counting stock and some size/colour is at or below the warning level (but not all sold out)
+  const isLowStock = (p) => p.trackStock && !p.soldOut && Object.values(p.stock || {}).some((v) => Number(v) <= state.stockSettings.lowAt);
+
+  $('lowStockForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      state.stockSettings = await api('/api/admin/stock-settings', { method: 'PUT', body: { lowAt: Number(e.target.lowAt.value) || 0 } });
+      renderProducts();
+      toast('Saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // Stock grid in the product editor: one box per size × colour, rebuilt when sizes/colours change
+  const splitList = (v) => [...new Set(v.split(',').map((x) => x.trim()).filter(Boolean))];
+  function readStockGrid() {
+    const out = { ...(state.editStock || {}) };
+    $('stockGrid').querySelectorAll('[data-stock]').forEach((i) => (out[i.dataset.stock] = Number(i.value) || 0));
+    return out;
+  }
+  function renderStockGrid() {
+    const on = form.trackStock.checked;
+    $('stockGrid').hidden = $('stockHelp').hidden = !on;
+    if (!on) return;
+    state.editStock = readStockGrid();
+    const sizes = splitList(form.sizes.value);
+    const colors = splitList(form.colors.value);
+    const rows = sizes.length ? sizes : [''];
+    const cols = colors.length ? colors : [''];
+    const cell = (sz, c) => `<input type="number" min="0" step="1" data-stock="${escapeHtml(`${sz}|${c}`)}" value="${state.editStock[`${sz}|${c}`] ?? 0}" aria-label="Stock ${escapeHtml([sz, c].filter(Boolean).join(' '))}">`;
+    $('stockGrid').innerHTML = `<table><thead><tr><th></th>${cols.map((c) => `<th>${escapeHtml(c || 'Qty')}</th>`).join('')}</tr></thead><tbody>${rows
+      .map((sz) => `<tr><th>${escapeHtml(sz || (colors.length ? 'Qty' : 'Pieces'))}</th>${cols.map((c) => `<td>${cell(sz, c)}</td>`).join('')}</tr>`)
+      .join('')}</tbody></table>`;
+  }
+  // (the product form is set up further down, so look it up directly here)
+  ['trackStock', 'sizes', 'colors'].forEach((name) => $('productForm')[name].addEventListener('change', renderStockGrid));
 
   // ---------- product order (drag, or ↑ ↓ on phones) ----------
   async function saveProductOrder() {
@@ -1027,6 +1096,10 @@
     }
     renderImages();
     renderColorChips();
+    form.trackStock.checked = Boolean(product?.trackStock);
+    state.editStock = { ...(product?.stock || {}) };
+    $('stockGrid').innerHTML = '';
+    renderStockGrid();
     $('editor').hidden = false;
     document.body.style.overflow = 'hidden';
   }
@@ -1072,6 +1145,7 @@
     else list.splice(i, 1);
     form.colors.value = list.join(', ');
     renderColorChips();
+    renderStockGrid();
   });
   $('colorsInput').addEventListener('input', renderColorChips);
 
@@ -1142,6 +1216,8 @@
       onSale: form.onSale.checked || (salePrice !== null && !state.editing?.salePrice),
       soldOut: form.soldOut.checked,
       featured: form.featured.checked,
+      trackStock: form.trackStock.checked,
+      stock: form.trackStock.checked ? readStockGrid() : {},
       images: state.images,
     };
     $('saveProductBtn').disabled = true;
@@ -1826,6 +1902,225 @@
     } finally {
       $('saveStaffBtn').disabled = false;
     }
+  });
+
+  // ---------- coupons ----------
+  state.coupons = [];
+
+  async function loadCoupons() {
+    try {
+      state.coupons = await api('/api/admin/coupons');
+      renderCoupons();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderCoupons() {
+    const today = new Date().toISOString().slice(0, 10);
+    $('couponList').innerHTML = state.coupons.length
+      ? state.coupons
+          .map((c, i) => {
+            const expired = c.expiresAt && c.expiresAt < today;
+            const full = c.maxUses && c.used >= c.maxUses;
+            const status = !c.active ? 'Off' : expired ? 'Expired' : full ? 'Used up' : 'Active';
+            return `
+        <div class="coupon-card${status === 'Active' ? '' : ' off'}" data-index="${i}">
+          <label>Code <input data-cp="code" maxlength="30" value="${escapeHtml(c.code)}" placeholder="EID20"></label>
+          <label>Discount <span class="cp-value"><select data-cp="type"><option value="percent"${c.type === 'percent' ? ' selected' : ''}>%</option><option value="fixed"${c.type === 'fixed' ? ' selected' : ''}>Rs</option></select><input data-cp="value" type="number" min="0" step="1" value="${c.value || ''}"></span></label>
+          <label>Min. order (Rs) <input data-cp="minOrder" type="number" min="0" step="1" value="${c.minOrder || 0}"></label>
+          <label>Last day <input data-cp="expiresAt" type="date" value="${escapeHtml(c.expiresAt || '')}"></label>
+          <label>Max uses <input data-cp="maxUses" type="number" min="0" step="1" value="${c.maxUses || 0}"></label>
+          <div class="cp-meta"><span class="cp-status">${status}</span><span>Used ${c.used || 0}${c.maxUses ? ` / ${c.maxUses}` : ''}</span></div>
+          <label class="switch"><input type="checkbox" data-cp="active"${c.active !== false ? ' checked' : ''}><span></span> On</label>
+          <button type="button" class="btn btn-sm btn-ghost" data-cp-remove>Delete</button>
+        </div>`;
+          })
+          .join('')
+      : '<div class="empty">No coupons yet. Click “+ New coupon”.</div>';
+  }
+
+  function readCoupons() {
+    document.querySelectorAll('.coupon-card').forEach((card) => {
+      const c = state.coupons[Number(card.dataset.index)];
+      card.querySelectorAll('[data-cp]').forEach((el) => (c[el.dataset.cp] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) || 0 : el.value));
+    });
+  }
+
+  $('addCouponBtn').addEventListener('click', () => {
+    readCoupons();
+    state.coupons.push({ code: '', type: 'percent', value: 10, minOrder: 0, expiresAt: '', maxUses: 0, used: 0, active: true });
+    renderCoupons();
+    document.querySelector('.coupon-card:last-child [data-cp=code]').focus();
+  });
+  $('couponList').addEventListener('click', (e) => {
+    const remove = e.target.closest('[data-cp-remove]');
+    if (!remove || !confirm('Delete this coupon? Customers can no longer use it.')) return;
+    readCoupons();
+    state.coupons.splice(Number(remove.closest('.coupon-card').dataset.index), 1);
+    renderCoupons();
+  });
+  $('saveCouponsBtn').addEventListener('click', async () => {
+    readCoupons();
+    try {
+      state.coupons = await api('/api/admin/coupons', { method: 'PUT', body: { coupons: state.coupons } });
+      renderCoupons();
+      toast('Coupons saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  // ---------- sales report ----------
+  const DAY = 24 * 3600 * 1000;
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(Math.round(n)));
+  let chartAsTable = false;
+
+  function reportPeriod() {
+    const now = new Date();
+    const r = $('reportRange').value;
+    if (r === 'today') return { start: startOfDay(now), byMonth: false };
+    if (r === 'month') return { start: new Date(now.getFullYear(), now.getMonth(), 1), byMonth: false };
+    if (r === 'all') {
+      const first = state.orders.reduce((m, o) => Math.min(m, new Date(o.createdAt).getTime()), now.getTime());
+      const start = startOfDay(new Date(first));
+      return { start, byMonth: now - start > 62 * DAY };
+    }
+    return { start: startOfDay(new Date(now - (Number(r) - 1) * DAY)), byMonth: false };
+  }
+
+  function renderReport() {
+    const { start, byMonth } = reportPeriod();
+    const inRange = state.orders.filter((o) => new Date(o.createdAt) >= start);
+    const sales = inRange.filter((o) => !LOST_STATUSES.includes(o.status));
+    const total = sales.reduce((n, o) => n + o.total, 0);
+    const items = sales.reduce((n, o) => n + o.items.reduce((m, i) => m + i.qty, 0), 0);
+    const lost = inRange.length - sales.length;
+    $('reportStats').innerHTML = [
+      [money(total), 'Sales'],
+      [sales.length, 'Orders'],
+      [sales.length ? money(Math.round(total / sales.length)) : '–', 'Average order'],
+      [items, 'Pieces sold'],
+      [sales.filter((o) => o.status === 'delivered').length, 'Delivered'],
+      [money(sales.filter((o) => o.paymentStatus === 'paid').reduce((n, o) => n + o.total, 0)), 'Payment received'],
+      [lost, 'Cancelled / returned'],
+      [sales.filter((o) => o.couponDiscount).length, 'Used a coupon'],
+    ]
+      .map(([n, label]) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`)
+      .join('');
+
+    // One column per day (or per month for long periods), empty days included
+    const buckets = [];
+    const now = new Date();
+    if (byMonth) {
+      for (let d = new Date(start.getFullYear(), start.getMonth(), 1); d <= now; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+        buckets.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleDateString('en-PK', { month: 'short', year: '2-digit' }), value: 0, count: 0 });
+      }
+    } else {
+      for (let d = new Date(start); d <= now; d = new Date(d.getTime() + DAY)) {
+        buckets.push({ key: dayKey(d), label: d.toLocaleDateString('en-PK', { day: 'numeric', month: 'short' }), value: 0, count: 0 });
+      }
+    }
+    const index = new Map(buckets.map((b) => [b.key, b]));
+    sales.forEach((o) => {
+      const d = new Date(o.createdAt);
+      const b = index.get(byMonth ? `${d.getFullYear()}-${d.getMonth()}` : dayKey(d));
+      if (b) {
+        b.value += o.total;
+        b.count += 1;
+      }
+    });
+    $('chartTitle').textContent = byMonth ? 'Sales per month' : 'Sales per day';
+    drawColumns(buckets);
+
+    const bars = (rows, fmt) => {
+      const max = Math.max(1, ...rows.map((r) => r.value));
+      return rows.length
+        ? rows.map((r) => `<div class="bar-row"><span class="bar-label" title="${escapeHtml(r.label)}">${escapeHtml(r.label)}</span><span class="bar-track"><span class="bar" style="width:${Math.max(2, (r.value / max) * 100)}%"></span></span><span class="bar-value">${fmt(r)}</span></div>`).join('')
+        : '<div class="empty">No sales in this period.</div>';
+    };
+    const byProduct = new Map();
+    sales.forEach((o) => o.items.forEach((i) => {
+      const r = byProduct.get(i.name) || { label: i.name, value: 0, qty: 0 };
+      r.value += i.price * i.qty;
+      r.qty += i.qty;
+      byProduct.set(i.name, r);
+    }));
+    $('topProducts').innerHTML = bars([...byProduct.values()].sort((a, b) => b.value - a.value).slice(0, 8), (r) => `${money(r.value)} <small>${r.qty} pcs</small>`);
+    const byCity = new Map();
+    sales.forEach((o) => {
+      const name = (o.customer.city || '—').trim();
+      const key = name.toLowerCase();
+      const r = byCity.get(key) || { label: name, value: 0, total: 0 };
+      r.value += 1;
+      r.total += o.total;
+      byCity.set(key, r);
+    });
+    $('topCities').innerHTML = bars([...byCity.values()].sort((a, b) => b.value - a.value).slice(0, 8), (r) => `${r.value} <small>${money(r.total)}</small>`);
+  }
+
+  // Column chart: one hue, thin columns with rounded tops, hairline grid, hover tooltip, table view
+  function drawColumns(buckets) {
+    const box = $('salesChart');
+    if (chartAsTable) {
+      box.innerHTML = `<div class="table-wrap"><table class="chart-table"><thead><tr><th>${buckets.length && buckets[0].key.length > 8 ? 'Day' : 'Month'}</th><th>Orders</th><th>Sales</th></tr></thead><tbody>${buckets
+        .map((b) => `<tr><td>${escapeHtml(b.label)}</td><td>${b.count}</td><td>${money(b.value)}</td></tr>`)
+        .join('')}</tbody></table></div>`;
+      return;
+    }
+    const W = 800, H = 260, L = 48, R = 12, T = 12, B = 30;
+    const max = Math.max(...buckets.map((b) => b.value), 0);
+    const step = (() => {
+      const raw = (max || 1000) / 4;
+      const mag = 10 ** Math.floor(Math.log10(raw));
+      return [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= raw);
+    })();
+    const top = step * 4;
+    const y = (v) => T + (H - T - B) * (1 - v / top);
+    const band = (W - L - R) / buckets.length;
+    const bw = Math.min(24, band * 0.6);
+    const every = Math.ceil(buckets.length / 10); // at most ~10 date labels
+    const grid = [0, 1, 2, 3, 4]
+      .map((i) => `<line x1="${L}" x2="${W - R}" y1="${y(step * i)}" y2="${y(step * i)}" class="grid${i ? '' : ' base'}"/><text x="${L - 6}" y="${y(step * i) + 4}" class="tick" text-anchor="end">${compact(step * i)}</text>`)
+      .join('');
+    const cols = buckets
+      .map((b, i) => {
+        const x = L + band * i + (band - bw) / 2;
+        const h = (H - T - B) * (b.value / top);
+        const r = Math.min(4, h);
+        const yTop = H - B - h;
+        const path = h > 0 ? `<path class="col" d="M${x},${H - B} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + bw - r} Q${x + bw},${yTop} ${x + bw},${yTop + r} V${H - B} Z"/>` : '';
+        return `<g class="col-g" data-i="${i}">${path}<rect class="hit" x="${L + band * i}" y="${T}" width="${band}" height="${H - T - B}"/>${i % every === 0 ? `<text x="${x + bw / 2}" y="${H - 10}" class="tick" text-anchor="middle">${escapeHtml(b.label)}</text>` : ''}</g>`;
+      })
+      .join('');
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Sales per period">${grid}${cols}</svg><div class="chart-tip" hidden></div>`;
+    const tip = box.querySelector('.chart-tip');
+    box.querySelector('svg').addEventListener('pointermove', (e) => {
+      const g = e.target.closest('.col-g');
+      box.querySelectorAll('.col-g.on').forEach((x) => x !== g && x.classList.remove('on'));
+      if (!g) return (tip.hidden = true);
+      g.classList.add('on');
+      const b = buckets[Number(g.dataset.i)];
+      tip.innerHTML = `<b>${escapeHtml(b.label)}</b><span>${money(b.value)}</span><span>${b.count} order(s)</span>`;
+      tip.hidden = false;
+      const rect = box.getBoundingClientRect();
+      tip.style.left = `${Math.min(e.clientX - rect.left + 12, rect.width - 150)}px`;
+      tip.style.top = `${e.clientY - rect.top - 10}px`;
+    });
+    box.querySelector('svg').addEventListener('pointerleave', () => {
+      tip.hidden = true;
+      box.querySelectorAll('.col-g.on').forEach((x) => x.classList.remove('on'));
+    });
+  }
+
+  $('reportRange').addEventListener('change', renderReport);
+  $('refreshReportBtn').addEventListener('click', () => loadOrders().then(renderReport));
+  $('chartTableBtn').addEventListener('click', () => {
+    chartAsTable = !chartAsTable;
+    $('chartTableBtn').textContent = chartAsTable ? 'Show as chart' : 'Show as table';
+    renderReport();
   });
 
   // ---------- Earn with us forms ----------

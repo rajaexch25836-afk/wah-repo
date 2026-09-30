@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
+  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, stockSettings: { lowAt: 3 }, coupon: null, hasCoupons: false, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -11,6 +11,11 @@
   const hasDiscount = (p) => p.onSale && p.salePrice != null && p.salePrice < p.price;
   const finalPrice = (p) => (hasDiscount(p) ? p.salePrice : p.price);
   const discount = (p) => (hasDiscount(p) ? Math.round((1 - p.salePrice / p.price) * 100) : 0);
+
+  // Stock (only for products where the shop counts stock). Key = "size|colour".
+  const stockLeft = (p, size = '', color = '') => (p.trackStock ? Math.max(0, Number(p.stock?.[`${size}|${color}`]) || 0) : Infinity);
+  const stockTotal = (p) => (p.trackStock ? Object.values(p.stock || {}).reduce((n, v) => n + (Number(v) || 0), 0) : Infinity);
+  const lowStock = (n) => n > 0 && n <= (state.stockSettings.lowAt || 0);
 
   function placeholder(p) {
     let hash = 0;
@@ -35,6 +40,7 @@
     if (p.soldOut) out.push('<span class="badge sold">Sold out</span>');
     else if (p.onSale) out.push(`<span class="badge">${discount(p) ? `-${discount(p)}%` : 'Sale'}</span>`);
     if (p.featured && !p.soldOut) out.push('<span class="badge hot">Trending</span>');
+    if (!p.soldOut && lowStock(stockTotal(p))) out.push(`<span class="badge low">Only ${stockTotal(p)} left</span>`);
     return out.length ? `<div class="badges">${out.join('')}</div>` : '';
   }
 
@@ -404,14 +410,25 @@
     const p = state.products.find((x) => x.id === id);
     if (!p) return;
     const pick = { size: p.sizes?.[0] || '', color: p.colors?.[0] || '', qty: 1 };
+    // Start on a size + colour that is in stock
+    if (p.trackStock && !stockLeft(p, pick.size, pick.color)) {
+      for (const sz of p.sizes?.length ? p.sizes : ['']) {
+        const c = (p.colors?.length ? p.colors : ['']).find((col) => stockLeft(p, sz, col) > 0);
+        if (c !== undefined) {
+          pick.size = sz;
+          pick.color = c;
+          break;
+        }
+      }
+    }
     const guide = state.content.sizeGuide || {};
     const guideLink = guide.text || guide.image ? '<button type="button" class="guide-link" data-page="size-guide">📏 Size guide</button>' : '';
     const optGroup = (label, key, values, extra = '') =>
       values?.length
         ? `<div><div class="opt-label">${label}${extra}</div><div class="opts">${values
-            .map((v, i) => {
+            .map((v) => {
               const swatch = key === 'color' ? colorSwatch(v) : '';
-              return `<button class="opt${i === 0 ? ' active' : ''}" data-opt="${key}" data-value="${escapeHtml(v)}">${swatch ? `<span class="swatch" style="background:${swatch}"></span>` : ''}${escapeHtml(v)}</button>`;
+              return `<button class="opt${pick[key] === v ? ' active' : ''}" data-opt="${key}" data-value="${escapeHtml(v)}">${swatch ? `<span class="swatch" style="background:${swatch}"></span>` : ''}${escapeHtml(v)}</button>`;
             })
             .join('')}</div></div>`
         : '';
@@ -434,6 +451,7 @@
         ${p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : ''}
         ${optGroup('Size', 'size', p.sizes, guideLink)}
         ${optGroup('Colour', 'color', p.colors)}
+        <div class="stock-note" id="stockNote"></div>
         ${p.soldOut ? '' : `<div><div class="opt-label">Quantity</div><div class="qty"><button data-qty="-1" aria-label="Less">−</button><span id="qtyVal">1</span><button data-qty="1" aria-label="More">+</button></div></div>`}
         <div class="detail-actions">
           <button class="btn btn-dark btn-block" id="addBtn" ${p.soldOut ? 'disabled' : ''}>${p.soldOut ? 'Sold out' : 'Add to bag'}</button>
@@ -449,11 +467,35 @@
       </div>`;
 
     const body = $('productBody');
+    // Shows "Only 2 left" / "Out of stock" for the chosen size + colour, and greys out empty choices
+    const updateStock = () => {
+      if (!p.trackStock || p.soldOut) return;
+      const left = stockLeft(p, pick.size, pick.color);
+      $('stockNote').textContent = !left ? 'Out of stock in this size / colour' : lowStock(left) ? `Only ${left} left — order soon` : '';
+      $('stockNote').className = `stock-note${left ? '' : ' out'}`;
+      $('addBtn').disabled = !left;
+      $('addBtn').textContent = left ? 'Add to bag' : 'Out of stock';
+      body.querySelector('#buyNowBtn')?.toggleAttribute('disabled', !left);
+      pick.qty = Math.min(pick.qty, Math.max(1, left));
+      if ($('qtyVal')) $('qtyVal').textContent = pick.qty;
+      const colors = p.colors?.length ? p.colors : [''];
+      body.querySelectorAll('[data-opt=size]').forEach((b) => b.classList.toggle('empty', !colors.some((c) => stockLeft(p, b.dataset.value, c))));
+      body.querySelectorAll('[data-opt=color]').forEach((b) => b.classList.toggle('empty', !stockLeft(p, pick.size, b.dataset.value)));
+    };
     body.onclick = (e) => {
       const opt = e.target.closest('[data-opt]');
       if (opt) {
         pick[opt.dataset.opt] = opt.dataset.value;
         body.querySelectorAll(`[data-opt="${opt.dataset.opt}"]`).forEach((b) => b.classList.toggle('active', b === opt));
+        // A new size whose chosen colour is sold out: switch to a colour that is in stock
+        if (opt.dataset.opt === 'size' && p.trackStock && !stockLeft(p, pick.size, pick.color)) {
+          const c = (p.colors || []).find((col) => stockLeft(p, pick.size, col));
+          if (c) {
+            pick.color = c;
+            body.querySelectorAll('[data-opt=color]').forEach((b) => b.classList.toggle('active', b.dataset.value === c));
+          }
+        }
+        updateStock();
       }
       const thumb = e.target.closest('[data-thumb]');
       if (thumb) {
@@ -462,7 +504,7 @@
       }
       const qty = e.target.closest('[data-qty]');
       if (qty) {
-        pick.qty = Math.max(1, Math.min(20, pick.qty + Number(qty.dataset.qty)));
+        pick.qty = Math.max(1, Math.min(20, stockLeft(p, pick.size, pick.color), pick.qty + Number(qty.dataset.qty)));
         $('qtyVal').textContent = pick.qty;
       }
       if (e.target.closest('#addBtn')) {
@@ -508,6 +550,7 @@
       }
     };
     openOverlay($('productModal'));
+    updateStock();
     if (location.hash !== `#product/${p.id}`) history.replaceState(null, '', `#product/${p.id}`);
   }
 
@@ -619,6 +662,7 @@
       renderLoginHint();
       renderPointsOption();
       renderSavedAddresses();
+      $('couponBox').hidden = !state.hasCoupons;
     }
     renderTotals();
   }
@@ -643,13 +687,21 @@
   }
   const usingPoints = () => state.step === 'details' && checkoutForm.usePoints.checked;
 
+  // Coupon discount on the items (same rule as the server); 0 if the bag no longer qualifies
+  function couponDiscount(subtotal) {
+    const c = state.coupon;
+    if (!c || state.step !== 'details' || (c.minOrder && subtotal < c.minOrder)) return 0;
+    return c.type === 'percent' ? Math.floor((subtotal * c.value) / 100) : Math.min(c.value, subtotal);
+  }
+
   const cartTotal = () => {
     const sub = cartSubtotal();
-    return sub + deliveryFee(checkoutForm.city.value, sub) - (usingPoints() ? pointsDiscount(sub).discount : 0);
+    const cd = couponDiscount(sub);
+    return sub + deliveryFee(checkoutForm.city.value, sub) - cd - (usingPoints() ? pointsDiscount(sub - cd).discount : 0);
   };
 
   function renderPointsOption() {
-    const { points, discount } = pointsDiscount(cartSubtotal());
+    const { points, discount } = pointsDiscount(cartSubtotal() - couponDiscount(cartSubtotal()));
     $('pointsUse').hidden = !points;
     if (!points) checkoutForm.usePoints.checked = false;
     $('pointsUseText').innerHTML = `Use <b>${points}</b> of my ${state.user?.points || 0} points — save <b>${money(discount)}</b>`;
@@ -661,19 +713,23 @@
     const hasDelivery = d.fee > 0 || (d.cityFees || []).some((c) => c.fee > 0);
     const fee = deliveryFee(checkoutForm.city.value, subtotal);
     const details = state.step === 'details';
-    const pts = usingPoints() ? pointsDiscount(subtotal).discount : 0;
-    $('sumRows').hidden = (!hasDelivery && !pts) || !subtotal;
+    const cd = couponDiscount(subtotal);
+    const pts = usingPoints() ? pointsDiscount(subtotal - cd).discount : 0;
+    $('sumRows').hidden = (!hasDelivery && !pts && !cd) || !subtotal;
+    $('couponRow').hidden = !cd;
+    $('couponCodeLabel').textContent = state.coupon ? `(${state.coupon.code})` : '';
+    $('cartCoupon').textContent = `− ${money(cd)}`;
     $('cartSubtotal').textContent = money(subtotal);
     $('cartDelivery').parentElement.hidden = !hasDelivery;
     $('cartDelivery').textContent = fee ? money(fee) : 'Free';
     $('deliveryNote').textContent = !details && fee && (d.cityFees || []).length ? '(depends on city)' : '';
     $('pointsRow').hidden = !pts;
     $('cartPoints').textContent = `− ${money(pts)}`;
-    $('cartTotal').textContent = money(subtotal + fee - pts);
+    $('cartTotal').textContent = money(subtotal + fee - cd - pts);
     const left = d.freeAbove - subtotal;
     $('freeHint').hidden = !(hasDelivery && d.freeAbove > 0 && subtotal && left > 0);
     $('freeHint').textContent = `Add ${money(left)} more for free delivery`;
-    $('manualAmount').textContent = money(subtotal + fee - pts);
+    $('manualAmount').textContent = money(subtotal + fee - cd - pts);
   }
 
   function renderLoginHint() {
@@ -740,6 +796,36 @@
     if (!state.user) return;
     CUSTOMER_FIELDS.forEach((k) => state.user[k] && (checkoutForm[k].value = state.user[k]));
   }
+
+  async function applyCoupon() {
+    const code = checkoutForm.coupon.value.trim();
+    const msg = $('couponMsg');
+    if (!code) {
+      state.coupon = null;
+      msg.textContent = '';
+      renderTotals();
+      return;
+    }
+    try {
+      const c = await jsonFetch('/api/coupons/check', { code, subtotal: cartSubtotal() });
+      state.coupon = { code: c.code, type: c.type, value: c.value, minOrder: c.minOrder || 0 };
+      msg.className = 'coupon-msg ok';
+      msg.textContent = `✓ ${c.code} applied — you save ${money(c.discount)}`;
+    } catch (err) {
+      state.coupon = null;
+      msg.className = 'coupon-msg bad';
+      msg.textContent = err.message;
+    }
+    renderPointsOption();
+    renderTotals();
+  }
+  $('applyCoupon').addEventListener('click', applyCoupon);
+  checkoutForm.coupon.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyCoupon();
+    }
+  });
 
   // Chips for the customer's saved addresses (and their main one), which fill the address and city
   function renderSavedAddresses() {
@@ -825,6 +911,7 @@
           paymentMethod,
           manual,
           usePoints: usingPoints(),
+          coupon: state.coupon?.code || '',
           items: cartLines().map((l) => ({ id: l.id, size: l.size, color: l.color, qty: l.qty })),
         }),
       });
@@ -847,6 +934,9 @@
       saveCart();
       ['notes', 'reference', 'receipt'].forEach((k) => (f[k].value = ''));
       f.usePoints.checked = false;
+      state.coupon = null;
+      f.coupon.value = '';
+      $('couponMsg').textContent = '';
       refreshUser();
       closeOverlay($('cartDrawer'));
       showOrder(data.order);
@@ -895,6 +985,7 @@
       <div class="order-summary">
         ${order.items.map((i) => `<div><span>${i.qty} × ${escapeHtml(i.name)}${i.size ? ` (${escapeHtml(i.size)})` : ''}</span><span>${money(i.price * i.qty)}</span></div>`).join('')}
         ${order.deliveryFee ? `<div><span>Delivery</span><span>${money(order.deliveryFee)}</span></div>` : ''}
+        ${order.couponDiscount ? `<div><span>Coupon (${escapeHtml(order.couponCode)})</span><span>− ${money(order.couponDiscount)}</span></div>` : ''}
         ${order.pointsDiscount ? `<div><span>Points (${order.pointsUsed})</span><span>− ${money(order.pointsDiscount)}</span></div>` : ''}
         <div class="sum-total"><span>Total</span><span>${money(order.total)}</span></div>
         <div><span>Payment</span><span>${payText}</span></div>
@@ -935,6 +1026,19 @@
   const shortDate = (iso) => new Date(iso).toLocaleString('en-PK', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 
   // Step-by-step progress the customer sees for an order
+  function courierHtml(o) {
+    const c = o.courier;
+    if (!c?.trackingNo) return '';
+    return `<div class="courier">🚚 <span>${escapeHtml(c.name || 'Courier')} · <b>${escapeHtml(c.trackingNo)}</b></span>
+      <button type="button" class="link-btn" data-copy-track="${escapeHtml(c.trackingNo)}">Copy</button>
+      ${c.link ? `<a class="link-btn" href="${escapeHtml(c.link)}" target="_blank" rel="noopener">Track parcel →</a>` : ''}</div>`;
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy-track]');
+    if (!b) return;
+    navigator.clipboard?.writeText(b.dataset.copyTrack).then(() => toast('Tracking number copied'), () => toast(b.dataset.copyTrack));
+  });
+
   function orderTracker(o) {
     if (!TRACK_STEPS.includes(o.status)) return `<div class="tracker-stopped">${ORDER_STATUS_LABELS[o.status] || escapeHtml(o.status)}</div>`;
     const current = TRACK_STEPS.indexOf(o.status);
@@ -1117,6 +1221,7 @@
             <div class="meta">${new Date(o.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${o.items.reduce((n, i) => n + i.qty, 0)} item(s)</div>
             <div><span class="status-pill">${ORDER_STATUS_LABELS[o.status] || o.status}</span> <span class="meta">${paymentText(o)}</span></div>
             ${o.pointsEarned ? `<div class="meta">⭐ You earned ${o.pointsEarned} points</div>` : ''}
+            ${courierHtml(o)}
             ${orderTracker(o)}
             ${o.status === 'new' && o.paymentStatus !== 'paid' ? `<button type="button" class="link-btn cancel-order" data-cancel-order="${escapeHtml(o.id)}" data-number="${o.number}">Cancel this order</button>` : ''}
           </div>`
@@ -1384,6 +1489,7 @@
             <div class="top"><span>#${order.number}</span><span>${money(order.total)}</span></div>
             <div class="meta">${new Date(order.createdAt).toLocaleDateString('en-PK', { dateStyle: 'medium' })} · ${order.items.map((i) => `${i.qty} × ${escapeHtml(i.name)}`).join(', ')}</div>
             <div><span class="status-pill">${ORDER_STATUS_LABELS[order.status] || order.status}</span> <span class="meta">${paymentText(order)}</span></div>
+            ${courierHtml(order)}
             ${orderTracker(order)}
           </div>`;
       } else if (form.dataset.pageForm === 'earn') {
@@ -1437,6 +1543,43 @@
       $('shop').scrollIntoView({ behavior: 'smooth' });
     }
   });
+
+  // ---------- install as an app ----------
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  let installPrompt = null;
+  const installDismissed = () => {
+    try {
+      return Number(localStorage.getItem('installDismissed') || 0) > Date.now() - 7 * 24 * 3600 * 1000;
+    } catch {
+      return false;
+    }
+  };
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    if (!installDismissed()) setTimeout(() => ($('installBar').hidden = false), 4000);
+  });
+  // iPhone has no install button: explain the Share → Add to Home Screen steps once
+  if (/iphone|ipad/i.test(navigator.userAgent) && !standalone && !installDismissed()) {
+    $('installText').textContent = 'Tap Share ⬆ then “Add to Home Screen”.';
+    $('installBtn').hidden = true;
+    setTimeout(() => ($('installBar').hidden = false), 6000);
+  }
+  $('installBtn').addEventListener('click', async () => {
+    $('installBar').hidden = true;
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null;
+  });
+  $('installClose').addEventListener('click', () => {
+    $('installBar').hidden = true;
+    try {
+      localStorage.setItem('installDismissed', String(Date.now()));
+    } catch {}
+  });
+  window.addEventListener('appinstalled', () => ($('installBar').hidden = true));
 
   // ---------- overlays ----------
   function openOverlay(el) {
@@ -1543,6 +1686,8 @@
       state.collections = data.collections || [];
       state.reviews = data.reviews || [];
       state.loyalty = data.loyalty || {};
+      state.stockSettings = data.stock || state.stockSettings;
+      state.hasCoupons = Boolean(data.hasCoupons);
       loadCart();
       prefillCustomer();
       renderPayOptions();
