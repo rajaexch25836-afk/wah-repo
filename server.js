@@ -1985,6 +1985,10 @@ if (require.main === module) {
 function startupMessage() {
   console.log(`Store running:      http://localhost:${PORT}`);
   console.log(`Admin dashboard:    http://localhost:${PORT}/admin`);
+  if (!storage.cloud) console.log(`Data saved in:      ${storage.DATA_DIR}`);
+  if (process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_VOLUME_MOUNT_PATH && !process.env.DATA_DIR) {
+    console.warn('WARNING: no Railway volume attached - orders and pictures will be lost on the next deploy. Add a volume (mount path /data).');
+  }
   if (freshStore) {
     console.log(`First login password: "${process.env.ADMIN_PASSWORD ? '(your ADMIN_PASSWORD)' : 'admin123'}" - the dashboard will then ask you to set a strong password.`);
   } else if (store.admin.mustChangePassword) {
