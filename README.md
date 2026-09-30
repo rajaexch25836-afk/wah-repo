@@ -152,9 +152,23 @@ Agar yeh setup na ho to website "Store setup is not finished" ka error dikhati h
 
 Note: payment screenshots Blob me ek lambe random naam se save hote hain; dashboard unhe login ke baad hi dikhata hai.
 
-### Apna server (VPS, Railway, Render)
+### Railway + GoDaddy domain
 
-Aisi hosting jo Node server chala sake aur files disk pe save rakhe: VPS (DigitalOcean, Hostinger VPS), Railway ya Render (persistent disk ke saath). Wahan kuch setup nahi chahiye — data `data/store.json` aur pictures `public/uploads/` me save hoti hain.
+1. **railway.com** pe GitHub se login karein aur **Hobby plan** ($5 mahina) lein.
+2. **New Project → Deploy from GitHub repo → wah-repo** chunein. Service ki **Settings → Source** me branch `master` rakhein.
+3. **Volume lagayein (zaroori):** project canvas pe service pe right-click → **Attach Volume**, mount path **`/data`**. Orders, products aur pictures isi me save hoti hain, is ke baghair har naye deploy pe sab mit jayega. (Server khud volume dhoond leta hai; logs me `Data saved in: /data` likha aata hai.)
+4. **Variables** tab me add karein:
+   - `ADMIN_PASSWORD` = apna mazboot password
+   - `PUBLIC_URL` = `https://www.aapkadomain.com`
+5. **Settings → Networking → Generate Domain** dabayein — `xxx.up.railway.app` link mil jayega, us pe check karein.
+6. **GoDaddy domain:** Railway me **Settings → Networking → Custom Domain** me `www.aapkadomain.com` likhein. Railway ek **CNAME** aur ek **TXT** record dikhayega. GoDaddy → **My Products → Domain → DNS → Add New Record** me bilkul wohi dono records daal dein (Name me sirf `www` / Railway jo likhe). 10 minute se kuch ghante me domain chal jata hai aur https khud lag jata hai.
+7. Bina `www` wala domain (`aapkadomain.com`) bhi chalana ho: GoDaddy DNS me **Forwarding → Add Forwarding** se `https://www.aapkadomain.com` pe forward (301, permanent) kar dein.
+
+Backup: dashboard ka **Backup download** waqtan fawaqtan le kar rakhein.
+
+### Apna server (VPS, Render)
+
+Aisi hosting jo Node server chala sake aur files disk pe save rakhe: VPS (DigitalOcean, Hostinger VPS) ya Render (persistent disk ke saath). Wahan data `data/store.json` aur pictures `public/uploads/` me save hoti hain. Disk kisi aur folder me lagi ho to `DATA_DIR` me us folder ka path de dein.
 
 GitHub Pages pe dashboard nahi chalega kyun ke woh sirf static files dikhata hai.
 
