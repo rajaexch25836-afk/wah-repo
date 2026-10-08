@@ -814,7 +814,7 @@ app.use('/api', (req, res, next) => {
   if (missing.length) {
     return res.status(503).json({ error: `Store setup is not finished. Connect in Vercel > Storage: ${missing.join(', ')}` });
   }
-  const readOnly = req.method === 'GET' && ['/store', '/admin/backup'].includes(req.path);
+  const readOnly = req.method === 'GET' && ['/store', '/admin/backup', '/admin/orders.xlsx'].includes(req.path);
   let finish;
   const done = new Promise((resolve) => (finish = resolve));
   const turn = queue;
@@ -1466,6 +1466,75 @@ app.all('/api/payments/easypaisa/status/:id/:token', express.urlencoded({ extend
 // Admin: orders
 app.get('/api/admin/orders', allow('orders', 'reports'), (req, res) => {
   res.json(store.orders.map(({ accessToken, ...o }) => o));
+});
+
+// Admin: every order as an Excel file (one row per order, with the customer's full details)
+app.get('/api/admin/orders.xlsx', allow('orders', 'reports'), (req, res) => {
+  const archiver = require('archiver');
+  const PAYMENT_NAMES = { cod: 'Cash on delivery', manual: 'Bank / wallet transfer', easypaisa: 'Easypaisa', safepay: 'Online (Safepay)' };
+  const when = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Karachi', hour12: false }).replace(',', '') : '');
+  const head = [
+    'Order #', 'Date', 'Status', 'First name', 'Last name', 'Phone', 'Email', 'Address', 'City', 'Notes',
+    'Items', 'Quantity', 'Subtotal', 'Delivery', 'Coupon', 'Discount', 'Total',
+    'Payment method', 'Payment status', 'Paid on', 'Transaction ID', 'Courier', 'Tracking no.',
+  ];
+  const widths = [9, 18, 14, 14, 14, 16, 26, 44, 14, 28, 50, 9, 10, 9, 12, 10, 10, 22, 14, 18, 18, 14, 18];
+  const rows = store.orders.map((o) => {
+    const c = o.customer || {};
+    const items = o.items || [];
+    return [
+      o.number, when(o.createdAt), String(o.status || '').replace(/_/g, ' '),
+      c.firstName, c.lastName, c.phone, c.email, c.address, c.city, c.notes,
+      items.map((i) => `${i.qty} x ${i.name}${[i.size, i.color].filter(Boolean).length ? ` (${[i.size, i.color].filter(Boolean).join(', ')})` : ''}`).join('\n'),
+      items.reduce((n, i) => n + i.qty, 0),
+      o.subtotal, o.deliveryFee || 0, o.coupon?.code || '', (o.couponDiscount || 0) + (o.pointsDiscount || 0), o.total,
+      PAYMENT_NAMES[o.paymentMethod] || o.paymentMethod, o.paymentStatus, when(o.paidAt),
+      o.manualPayment?.reference || '', o.courier?.name || '', o.courier?.trackingNo || '',
+    ];
+  });
+  // Text goes in as text (so phone numbers keep their leading 0); only real numbers are numbers.
+  const xml = (v) => String(v ?? '').replace(/[^\x09\x0A\x0D\x20-퟿-�]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const cell = (v) => (typeof v === 'number' && Number.isFinite(v) ? `<c><v>${v}</v></c>` : `<c t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`);
+  const sheet =
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+    `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>` +
+    `<sheetData>${[head, ...rows].map((r) => `<row>${r.map(cell).join('')}</row>`).join('')}</sheetData>` +
+    '</worksheet>';
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="orders-${stamp}.xlsx"`);
+  const zip = archiver('zip', { zlib: { level: 6 } });
+  zip.on('error', (err) => {
+    console.error(err);
+    res.destroy(err);
+  });
+  zip.pipe(res);
+  zip.append(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+    { name: '[Content_Types].xml' }
+  );
+  zip.append(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    { name: '_rels/.rels' }
+  );
+  zip.append(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Orders" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    { name: 'xl/workbook.xml' }
+  );
+  zip.append(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    { name: 'xl/_rels/workbook.xml.rels' }
+  );
+  zip.append(sheet, { name: 'xl/worksheets/sheet1.xml' });
+  zip.finalize();
 });
 
 // Re-checks an Easypaisa order with Easypaisa (e.g. the customer closed the page after paying)
