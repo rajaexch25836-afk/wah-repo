@@ -1500,6 +1500,19 @@ app.patch('/api/admin/orders/:id', allow('orders'), (req, res) => {
   res.json(rest);
 });
 
+// Admin: delete an order for good (owner only). An order that was still open gives back its
+// stock, coupon use and points first, the same as cancelling it.
+app.delete('/api/admin/orders/:id', requireAdmin, (req, res) => {
+  const idx = store.orders.findIndex((o) => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Order not found' });
+  const order = store.orders[idx];
+  if (order.status !== 'delivered') setOrderStatus(order, 'cancelled');
+  store.orders.splice(idx, 1);
+  if (order.manualPayment?.receipt) storage.removeReceipt(order.manualPayment.receipt, order.manualPayment.receiptUrl);
+  save();
+  res.json({ ok: true });
+});
+
 app.get('/api/admin/receipts/:file', allow('orders'), async (req, res, next) => {
   const file = path.basename(req.params.file);
   const order = store.orders.find((o) => o.manualPayment?.receipt === file);

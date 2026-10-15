@@ -31,6 +31,7 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - **Payments & Delivery** tab: **delivery charge** (normal), kuch shehron ka alag charge, aur itne se upar **free delivery**; checkout me subtotal + delivery + total dikhta hai
   - **Pages & Popup** tab: **Offer popup** — picture, heading, text, button; on/off. Har visitor ko din me ek dafa dikhta hai
   - **Orders** tab: har order pe **🖨 Slip** (parcel pe lagane wali parchi: naam, phone, address, items, COD raqam) aur upar **Print slips** se list ke saare orders ek saath
+  - **Orders** tab: har order pe **🗑 Delete** (sirf owner): order hamesha ke liye mit jata hai. Agar order abhi deliver nahi hua tha to us ka stock, coupon aur points wapas ho jate hain.
   - **Staff** tab (sirf owner): staff ke alag login (username + password) aur har ek ke kaam chunein — jaise packing wala sirf Orders dekhe, price na badal sake. Staff login page pe apna username likhta hai
   - **Security & Backup** tab: **Download backup** — saara data (data.json) aur saari pictures ek .zip me
   - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein

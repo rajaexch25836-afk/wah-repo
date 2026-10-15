@@ -435,6 +435,7 @@
                 ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}"${o.status === v ? ' selected' : ''}>${l}</option>`).join('')}
               </select>
               <button class="btn btn-sm btn-ghost" data-print-slip title="Print packing slip">🖨 Slip</button>
+              ${can('owner') ? '<button class="btn btn-sm btn-ghost btn-delete" data-delete-order title="Delete this order">🗑 Delete</button>' : ''}
             </header>
             <details class="courier-edit"${o.courier?.trackingNo ? '' : ''}>
               <summary>🚚 Courier${o.courier?.trackingNo ? `: <b>${escapeHtml(o.courier.name)} · ${escapeHtml(o.courier.trackingNo)}</b>` : ' — add tracking number'}</summary>
@@ -514,6 +515,22 @@
       const courier = Object.fromEntries([...box.querySelectorAll('[data-courier]')].map((el) => [el.dataset.courier, el.value]));
       if (!courier.trackingNo.trim()) return toast('Please enter the tracking number', true);
       updateOrder(e.target.closest('.order').dataset.id, { courier });
+      return;
+    }
+    if (e.target.closest('[data-delete-order]')) {
+      const order = state.orders.find((o) => o.id === e.target.closest('.order').dataset.id);
+      const open = order.status !== 'delivered' && !LOST_STATUSES.includes(order.status);
+      const msg = `Delete order #${order.number} of ${order.customer.firstName} ${order.customer.lastName} for good?\n\n` +
+        (open ? 'Its stock and coupon will be given back. ' : '') + 'This cannot be undone.';
+      if (!confirm(msg)) return;
+      try {
+        await api(`/api/admin/orders/${order.id}`, { method: 'DELETE' });
+        state.orders = state.orders.filter((o) => o.id !== order.id);
+        renderOrders();
+        toast(`Order #${order.number} deleted`);
+      } catch (err) {
+        toast(err.message, true);
+      }
       return;
     }
     if (e.target.closest('[data-print-slip]')) {
