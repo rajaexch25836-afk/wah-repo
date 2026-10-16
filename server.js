@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 const storage = require('./lib/storage');
 const { withContentDefaults, sanitizeContent, contentImages } = require('./lib/content');
@@ -97,6 +98,8 @@ function withDefaults(data) {
   data.passwordRequests ||= []; // "Forgot password" requests for the admin
   data.coupons ||= []; // discount codes like EID20
   data.stockSettings = { lowAt: 3, ...data.stockSettings }; // "low stock" warning at or below this
+  // Google & sharing: page title, description, keywords, share picture, Search Console, Analytics
+  data.seo = { title: '', description: '', keywords: '', shareImage: '', googleVerification: '', analyticsId: '', ...data.seo };
   // Admins from before the strong-password rule must pick a strong password once
   if (data.admin && data.admin.passwordPolicy !== 2) data.admin.mustChangePassword = true;
   return data;
@@ -582,7 +585,8 @@ function isImageInUse(src) {
   return (
     store.products.some((p) => p.images?.includes(src)) ||
     (store.settings.slides || []).some((s) => s.image === src) ||
-    contentImages(store.content).includes(src)
+    contentImages(store.content).includes(src) ||
+    store.seo?.shareImage === src
   );
 }
 
@@ -1924,6 +1928,33 @@ app.put('/api/admin/payment-settings', allow('payments'), (req, res) => {
   res.json({ ...store.paymentSettings, gateways: { safepay: SAFEPAY.enabled, easypaisa: EASYPAISA.enabled } });
 });
 
+// Admin: SEO (what Google and WhatsApp/Facebook previews show)
+function sanitizeSeo(b = {}) {
+  // Search Console gives a whole <meta ... content="CODE"> tag; keep only the code
+  const verification = str(b.googleVerification, 300).match(/content=["']?([\w-]+)/)?.[1] || str(b.googleVerification, 100);
+  const analytics = str(b.analyticsId, 30).toUpperCase();
+  return {
+    title: str(b.title, 70),
+    description: str(b.description, 300),
+    keywords: str(b.keywords, 300),
+    shareImage: storage.isUploadUrl(b.shareImage) ? b.shareImage : '',
+    googleVerification: /^[\w-]{10,100}$/.test(verification) ? verification : '',
+    analyticsId: /^G-[A-Z0-9]{4,15}$/.test(analytics) ? analytics : '',
+  };
+}
+
+app.get('/api/admin/seo', allow('content'), (req, res) => {
+  res.json({ ...store.seo, siteUrl: seoBase(req) });
+});
+
+app.put('/api/admin/seo', allow('content'), (req, res) => {
+  const old = store.seo.shareImage;
+  store.seo = sanitizeSeo(req.body);
+  if (old && old !== store.seo.shareImage && !isImageInUse(old)) removeUpload(old);
+  save();
+  res.json({ ...store.seo, siteUrl: seoBase(req) });
+});
+
 // Sub-categories per category, e.g. { Men: ['Kurta', 'Shoes'] }. Only for categories that exist.
 function sanitizeSubcategories(input, categories) {
   const out = {};
@@ -1964,6 +1995,134 @@ app.put('/api/admin/settings', allow('content'), (req, res) => {
   oldSlides.filter((s) => !isImageInUse(s.image)).forEach((s) => removeUpload(s.image));
   save();
   res.json(store.settings);
+});
+
+// ---------- SEO: pages Google can read, product links, sitemap ----------
+// The shop is one page (index.html) filled in by the browser. For Google and for link previews on
+// WhatsApp/Facebook, the server writes the right title, description and picture into the page first.
+const INDEX_FILE = path.join(__dirname, 'public', 'index.html');
+const escAttr = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const slugify = (name) =>
+  String(name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/[\s-]+/g, '-')
+    .slice(0, 60) || 'item';
+const productPath = (p) => `/product/${encodeURIComponent(p.id)}/${slugify(p.name)}`;
+
+function seoBase(req) {
+  const proto = (req.get('x-forwarded-proto') || req.protocol).split(',')[0].trim();
+  return PUBLIC_URL || `${proto}://${req.get('host')}`;
+}
+
+async function siteData() {
+  const data = (await storage.loadData().catch(() => null)) || structuredClone(SEED);
+  return withDefaults(data);
+}
+
+function seoHead(data, req, product) {
+  const base = seoBase(req);
+  const s = data.settings || {};
+  const seo = data.seo || {};
+  const abs = (src) => (!src ? '' : src.startsWith('/') ? base + src : src);
+  const storeName = s.storeName || 'Store';
+  let title, description, image, url;
+  if (product) {
+    const price = finalPrice(product);
+    title = `${product.name} | ${storeName}`;
+    description = (product.description || '').replace(/\s+/g, ' ').trim().slice(0, 160) || `${product.name}: ${s.currency || 'Rs.'} ${price}. Order online from ${storeName}.`;
+    image = abs(product.images?.[0]);
+    url = base + productPath(product);
+  } else {
+    title = seo.title || `${storeName}${s.tagline ? ` | ${s.tagline}` : ''}`;
+    description = seo.description || s.tagline || `Shop online at ${storeName}.`;
+    image = abs(seo.shareImage || s.slides?.[0]?.image || data.products?.find((p) => p.images?.length)?.images[0]);
+    url = `${base}/`;
+  }
+  const tags = [
+    `<title>${escAttr(title)}</title>`,
+    `<meta name="description" content="${escAttr(description)}">`,
+    `<link rel="canonical" href="${escAttr(url)}">`,
+    `<meta property="og:site_name" content="${escAttr(storeName)}">`,
+    `<meta property="og:type" content="${product ? 'product' : 'website'}">`,
+    `<meta property="og:title" content="${escAttr(title)}">`,
+    `<meta property="og:description" content="${escAttr(description)}">`,
+    `<meta property="og:url" content="${escAttr(url)}">`,
+    `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}">`,
+  ];
+  if (image) tags.push(`<meta property="og:image" content="${escAttr(image)}">`, `<meta name="twitter:image" content="${escAttr(image)}">`);
+  if (!product && seo.keywords) tags.push(`<meta name="keywords" content="${escAttr(seo.keywords)}">`);
+  if (seo.googleVerification) tags.push(`<meta name="google-site-verification" content="${escAttr(seo.googleVerification)}">`);
+
+  // Structured data: Google can show the price and "In stock" under the result
+  const social = Object.entries(s.social || {})
+    .filter(([k, v]) => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(k) && v)
+    .map(([, v]) => v);
+  const currency = /rs|pkr|₨/i.test(s.currency || 'Rs.') ? 'PKR' : '';
+  const ld = product
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'Product',
+        name: product.name,
+        description,
+        image: (product.images || []).map(abs),
+        category: [product.category, product.subcategory].filter(Boolean).join(' > ') || undefined,
+        brand: { '@type': 'Brand', name: storeName },
+        offers: {
+          '@type': 'Offer',
+          url,
+          price: finalPrice(product),
+          priceCurrency: currency || undefined,
+          availability: `https://schema.org/${product.soldOut ? 'OutOfStock' : 'InStock'}`,
+        },
+      }
+    : { '@context': 'https://schema.org', '@type': 'ClothingStore', name: storeName, url, description, image: image || undefined, sameAs: social.length ? social : undefined };
+  tags.push(`<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>`);
+
+  if (seo.analyticsId) {
+    tags.push(
+      `<script async src="https://www.googletagmanager.com/gtag/js?id=${seo.analyticsId}"></script>`,
+      `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${seo.analyticsId}');</script>`
+    );
+  }
+  return tags.join('\n  ');
+}
+
+async function sendShopPage(req, res, productId) {
+  try {
+    const data = await siteData();
+    const product = productId ? data.products.find((p) => p.id === productId) : null;
+    const html = (await fs.promises.readFile(INDEX_FILE, 'utf8'))
+      .replace(/<title>[\s\S]*?<\/title>\s*/, '')
+      .replace(/<meta name="description"[^>]*>\s*/, '')
+      .replace('</head>', `  ${seoHead(data, req, product)}\n</head>`);
+    res.status(productId && !product ? 404 : 200).set('Cache-Control', 'no-cache').type('html').send(html);
+  } catch (err) {
+    console.error(err);
+    res.sendFile(INDEX_FILE);
+  }
+}
+
+app.get(['/', '/index.html'], (req, res) => sendShopPage(req, res));
+// Product links, e.g. /product/p5/chiffon-abaya (the name part is only for people and Google)
+app.get('/product/:id/:slug?', (req, res) => sendShopPage(req, res, req.params.id));
+
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\n\nSitemap: ${seoBase(req)}/sitemap.xml\n`);
+});
+
+app.get('/sitemap.xml', async (req, res) => {
+  const data = await siteData();
+  const base = seoBase(req);
+  const urls = [
+    `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
+    ...data.products.map(
+      (p) => `<url><loc>${escAttr(base + productPath(p))}</loc>${p.updatedAt ? `<lastmod>${p.updatedAt.slice(0, 10)}</lastmod>` : ''}<changefreq>weekly</changefreq><priority>0.8</priority></url>`
+    ),
+  ];
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`);
 });
 
 // Static files

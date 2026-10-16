@@ -1,5 +1,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
+  // A shared product link (/product/p1/kurta) opens the shop with that product on top
+  const sharedProduct = location.pathname.match(/^\/product\/([^/]+)/);
+  if (sharedProduct) history.replaceState(null, '', `/${location.search}#product/${sharedProduct[1]}`);
   const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, stockSettings: { lowAt: 3 }, coupon: null, hasCoupons: false, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', sub: '', query: '', sort: 'featured', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
@@ -140,7 +143,8 @@
   // ---------- settings / branding ----------
   function renderSettings() {
     const s = state.settings;
-    document.title = `${s.storeName}${s.tagline ? ' — ' + s.tagline : ''}`;
+    // The server already writes the SEO title; this is only a fallback
+    if (!document.querySelector('link[rel=canonical]')) document.title = `${s.storeName}${s.tagline ? ' — ' + s.tagline : ''}`;
     $('logo').textContent = s.storeName;
     $('footerLogo').textContent = s.storeName;
     $('footerName').textContent = s.storeName;
@@ -473,7 +477,7 @@
         </div>
         <div class="share-row">
           <button type="button" class="btn btn-ghost btn-sm-store" id="shareBtn">📤 Share</button>
-          <a class="btn btn-ghost btn-sm-store" id="shareWa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${p.name} — ${money(finalPrice(p))}\n${productUrl(p.id)}`)}"><span class="icon">${ICONS.whatsapp}</span> Send on WhatsApp</a>
+          <a class="btn btn-ghost btn-sm-store" id="shareWa" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${p.name} — ${money(finalPrice(p))}\n${productUrl(p)}`)}"><span class="icon">${ICONS.whatsapp}</span> Send on WhatsApp</a>
         </div>
         ${reviewsHtml(p)}
       </div>`;
@@ -530,7 +534,7 @@
         openCart('details');
       }
       if (e.target.closest('#shareBtn')) {
-        const url = productUrl(p.id);
+        const url = productUrl(p);
         if (navigator.share) navigator.share({ title: p.name, text: `${p.name} — ${money(finalPrice(p))}`, url }).catch(() => {});
         else navigator.clipboard?.writeText(url).then(() => toast('Link copied'), () => toast(url));
       }
@@ -566,8 +570,11 @@
     if (location.hash !== `#product/${p.id}`) history.replaceState(null, '', `#product/${p.id}`);
   }
 
-  // Every product has its own link, e.g. https://yourstore.com/#product/p1
-  const productUrl = (id) => `${location.origin}${location.pathname}#product/${encodeURIComponent(id)}`;
+  // Every product has its own link, e.g. https://yourstore.com/product/p1/classic-cotton-kurta
+  // (the server puts the product's name, picture and price in that page for Google and WhatsApp)
+  const slugify = (name) =>
+    String(name || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s-]/g, '').trim().replace(/[\s-]+/g, '-').slice(0, 60) || 'item';
+  const productUrl = (p) => `${location.origin}/product/${encodeURIComponent(p.id)}/${slugify(p.name)}`;
 
   function reviewsHtml(p) {
     const list = productReviews(p.id);
