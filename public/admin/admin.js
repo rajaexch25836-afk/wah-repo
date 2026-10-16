@@ -294,10 +294,11 @@
   document.querySelectorAll('.tab').forEach((tab) =>
     tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      ['orders', 'reports', 'products', 'collections', 'reviews', 'customers', 'payments', 'coupons', 'settings', 'pages', 'earn', 'staff', 'security'].forEach(
+      ['orders', 'reports', 'products', 'collections', 'reviews', 'customers', 'payments', 'coupons', 'settings', 'pages', 'seo', 'earn', 'staff', 'security'].forEach(
         (name) => ($(`tab-${name}`).hidden = tab.dataset.tab !== name)
       );
       if (tab.dataset.tab === 'security') loadSecurity();
+      if (tab.dataset.tab === 'seo') loadSeo();
       if (tab.dataset.tab === 'earn') loadApplications();
       if (tab.dataset.tab === 'reviews') loadReviews();
       if (tab.dataset.tab === 'collections') renderCollections();
@@ -1396,6 +1397,97 @@
   settingsForm.addEventListener('submit', (e) => {
     e.preventDefault();
     saveSettings();
+  });
+
+  // ---------- SEO ----------
+  const seoForm = $('seoForm');
+
+  async function loadSeo() {
+    try {
+      state.seo = await api('/api/admin/seo');
+      fillSeo();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function fillSeo() {
+    const s = state.seo;
+    ['title', 'description', 'keywords', 'googleVerification', 'analyticsId'].forEach((k) => (seoForm[k].value = s[k] || ''));
+    renderSeoImage();
+    renderSeoPreview();
+    const site = s.siteUrl;
+    $('seoLinks').innerHTML = `
+      <div class="seo-link"><span>Sitemap (give this to Search Console → Sitemaps)</span><code>${escapeHtml(site)}/sitemap.xml</code>
+        <button type="button" class="btn btn-sm btn-ghost" data-copy="${escapeHtml(site)}/sitemap.xml">Copy</button></div>
+      <div class="seo-link"><span>Check what Google reads</span><a href="${escapeHtml(site)}/sitemap.xml" target="_blank" rel="noopener">sitemap.xml</a> · <a href="${escapeHtml(site)}/robots.txt" target="_blank" rel="noopener">robots.txt</a></div>`;
+  }
+
+  function renderSeoImage() {
+    const src = state.seo.shareImage;
+    $('seoImage').innerHTML = src
+      ? `<img src="${escapeHtml(src)}" alt="Share picture"><button type="button" class="btn btn-sm btn-ghost" id="seoImageRemove">Remove</button>`
+      : '<p class="hint">No picture yet. The first slider picture is used.</p>';
+    $('seoImageLabel').textContent = src ? 'Change picture' : '+ Choose picture';
+  }
+
+  // Live preview of the Google result, with letter counts
+  function renderSeoPreview() {
+    const name = state.settings.storeName || 'Store';
+    const title = seoForm.title.value.trim() || `${name}${state.settings.tagline ? ` | ${state.settings.tagline}` : ''}`;
+    const desc = seoForm.description.value.trim() || state.settings.tagline || `Shop online at ${name}.`;
+    const site = (state.seo?.siteUrl || location.origin).replace(/^https?:\/\//, '');
+    const cut = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+    $('seoPreview').innerHTML = `<div class="serp-site">${escapeHtml(site)}</div><div class="serp-title">${escapeHtml(cut(title, 60))}</div><div class="serp-desc">${escapeHtml(cut(desc, 160))}</div>`;
+    const counts = { title: [seoForm.title.value.length, 60], description: [seoForm.description.value.length, 160] };
+    Object.entries(counts).forEach(([k, [n, max]]) => {
+      const el = seoForm.querySelector(`[data-count="${k}"]`);
+      el.textContent = `${n} / ${max} letters${n > max ? ' — Google will cut the end' : ''}`;
+      el.classList.toggle('over', n > max);
+    });
+  }
+  seoForm.addEventListener('input', renderSeoPreview);
+
+  async function saveSeo(message = 'SEO saved') {
+    const body = Object.fromEntries(['title', 'description', 'keywords', 'googleVerification', 'analyticsId'].map((k) => [k, seoForm[k].value]));
+    body.shareImage = state.seo.shareImage || '';
+    try {
+      state.seo = await api('/api/admin/seo', { method: 'PUT', body });
+      fillSeo();
+      if (seoForm.googleVerification.value === '' && body.googleVerification.trim()) toast('That Search Console code does not look right. Paste the whole tag again.', true);
+      else if (seoForm.analyticsId.value === '' && body.analyticsId.trim()) toast('Analytics ID should look like G-XXXXXXXXXX', true);
+      else toast(message);
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  seoForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveSeo();
+  });
+
+  $('seoImageInput').addEventListener('change', async (e) => {
+    const [file] = e.target.files;
+    e.target.value = '';
+    if (!file) return;
+    toast('Uploading…');
+    try {
+      [state.seo.shareImage] = await uploadImages([file]);
+      await saveSeo('Share picture saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  seoForm.addEventListener('click', (e) => {
+    if (e.target.closest('#seoImageRemove')) {
+      state.seo.shareImage = '';
+      saveSeo('Share picture removed');
+      return;
+    }
+    const copy = e.target.closest('[data-copy]');
+    if (copy) navigator.clipboard?.writeText(copy.dataset.copy).then(() => toast('Copied'));
   });
 
   // ---------- home page slider ----------

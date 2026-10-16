@@ -64,6 +64,7 @@
         <button class="tab" data-tab="coupons" data-perm="payments">Coupons</button>
         <button class="tab" data-tab="settings" data-perm="content">Store &amp; Social</button>
         <button class="tab" data-tab="pages" data-perm="content">Pages &amp; Popup</button>
+        <button class="tab" data-tab="seo" data-perm="content">SEO</button>
         <button class="tab" data-tab="earn" data-perm="earn">Earn with us <span class="tab-badge" id="newEarnBadge" hidden></span></button>
         <button class="tab" data-tab="staff" data-perm="owner">Staff</button>
         <button class="tab" data-tab="security" data-perm="owner">Security &amp; Backup</button>
@@ -356,6 +357,49 @@
       <!-- Pages: About us, policies, Earn with us, size guide, location -->
       <section id="tab-pages" hidden>
         <form id="contentForm" class="settings"></form>
+      </section>
+
+      <!-- SEO: what Google and WhatsApp/Facebook link previews show -->
+      <section id="tab-seo" hidden>
+        <form id="seoForm" class="settings">
+          <div class="panel panel-wide">
+            <h2>How your store looks on Google</h2>
+            <p class="hint">Write what people should read when your store shows up in Google search. Products get their own title, description and picture automatically.</p>
+            <div class="serp" id="seoPreview" aria-label="Google preview"></div>
+          </div>
+
+          <div class="panel">
+            <h2>Google search</h2>
+            <label>Page title <small>About 50–60 letters. e.g. Bichkand Fashion | Kurta, Abaya &amp; Shoes Online in Pakistan</small><input name="title" maxlength="70"><small class="count" data-count="title"></small></label>
+            <label>Description <small>About 120–160 letters: what you sell, where you deliver, how to order</small><textarea name="description" rows="3" maxlength="300"></textarea><small class="count" data-count="description"></small></label>
+            <label>Keywords <small>Comma separated, e.g. ladies kurta, men shalwar kameez, abaya online Pakistan</small><input name="keywords" maxlength="300"></label>
+          </div>
+
+          <div class="panel">
+            <h2>Share picture</h2>
+            <p class="hint">Shown when someone sends your store link on WhatsApp, Facebook or Instagram. Best size: <b>1200 × 630 px</b>. Product links show the product's own picture.</p>
+            <div class="seo-image" id="seoImage"></div>
+            <label class="upload">
+              <input type="file" id="seoImageInput" accept="image/*" hidden>
+              <span id="seoImageLabel">+ Choose picture</span>
+            </label>
+          </div>
+
+          <div class="panel">
+            <h2>Google Search Console</h2>
+            <p class="hint">Tells Google the site is yours so it shows up sooner. In Search Console choose <b>URL prefix</b> → <b>HTML tag</b>, copy the tag and paste it here.</p>
+            <label>Verification tag or code <input name="googleVerification" placeholder='&lt;meta name="google-site-verification" content="…"&gt;'></label>
+            <div class="seo-links" id="seoLinks"></div>
+          </div>
+
+          <div class="panel">
+            <h2>Google Analytics <small>(optional)</small></h2>
+            <p class="hint">See how many people visit and where they come from. Paste your Measurement ID.</p>
+            <label>Measurement ID <input name="analyticsId" placeholder="G-XXXXXXXXXX" maxlength="30"></label>
+          </div>
+
+          <div class="save-bar"><button class="btn btn-accent" type="submit">Save SEO</button></div>
+        </form>
       </section>
 
       <!-- Earn with us forms -->

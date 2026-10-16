@@ -401,3 +401,17 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
   .coupon-card { grid-template-columns: 1fr 1fr; }
   .bar-row { grid-template-columns: 1fr 1.2fr auto; }
 }
+
+/* SEO tab */
+.serp { border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; background: #fff; max-width: 640px; font-family: Arial, sans-serif; }
+.serp-site { font-size: 13px; color: #202124; }
+.serp-title { font-size: 20px; line-height: 1.3; color: #1a0dab; margin: 4px 0; }
+.serp-desc { font-size: 14px; line-height: 1.5; color: #4d5156; }
+.count { font-weight: 400; color: var(--muted); font-size: 12px; }
+.count.over { color: #b42318; }
+.seo-image { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seo-image img { width: 240px; max-width: 100%; aspect-ratio: 1200 / 630; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+.seo-links { display: grid; gap: 10px; font-size: 13px; }
+.seo-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.seo-link span { color: var(--muted); width: 100%; }
+.seo-link code { background: var(--bg); padding: 4px 8px; border-radius: 6px; word-break: break-all; }
