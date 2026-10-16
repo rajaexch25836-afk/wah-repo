@@ -31,6 +31,9 @@ Kapron (clothes) ki online shop, apne admin dashboard ke saath.
   - **Payments & Delivery** tab: **delivery charge** (normal), kuch shehron ka alag charge, aur itne se upar **free delivery**; checkout me subtotal + delivery + total dikhta hai
   - **Pages & Popup** tab: **Offer popup** — picture, heading, text, button; on/off. Har visitor ko din me ek dafa dikhta hai
   - **Orders** tab: har order pe **🖨 Slip** (parcel pe lagane wali parchi: naam, phone, address, items, COD raqam) aur upar **Print slips** se list ke saare orders ek saath
+  - **Orders** tab: har order pe **🗑 Delete** (sirf owner): order hamesha ke liye mit jata hai. Agar order abhi deliver nahi hua tha to us ka stock, coupon aur points wapas ho jate hain.
+  - **Sub-categories:** **Store & Social** me har category ke neeche us ki sub-categories likhein (jaise Men: Kurta, Jeans, Shoes). Product edit me **Sub-category** chunein. Dukaan pe category dabane se us ki sub-categories ki line aa jati hai.
+  - **Sizes ke ready-made sets:** product edit me Sizes ke neeche **Clothes, Shoes (EU), Shoes (UK / PK), Kids shoes, Kids (age), Waist (jeans), Free size**. Set dabayein, phir jo size nahi hai us pe tap kar ke hata dein.
   - **Staff** tab (sirf owner): staff ke alag login (username + password) aur har ek ke kaam chunein — jaise packing wala sirf Orders dekhe, price na badal sake. Staff login page pe apna username likhta hai
   - **Security & Backup** tab: **Download backup** — saara data (data.json) aur saari pictures ek .zip me
   - **Security** tab: admin password badlein (strong password zaroori; badalte hi baqi devices logout) aur **Google Authenticator** on/off karein
