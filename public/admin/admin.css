@@ -258,6 +258,16 @@ button.stat:hover, .stat.active { border-color: var(--ink); }
 .color-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .color-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .color-chip.on { border-color: var(--ink); background: var(--ink); color: #fff; }
+.label-like { font-weight: 600; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
+.label-like small { font-weight: 400; color: var(--muted); font-size: 12px; }
+.size-presets { display: grid; gap: 8px; }
+.size-sets { display: flex; flex-wrap: wrap; gap: 6px; }
+.size-set { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px dashed var(--line); background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted); }
+.size-set.on { border-style: solid; border-color: var(--ink); color: var(--ink); }
+.subcat-editor { display: grid; gap: 8px; }
+.subcat-row { display: grid; grid-template-columns: minmax(80px, 140px) 1fr; align-items: center; gap: 10px; }
+.subcat-row span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 520px) { .subcat-row { grid-template-columns: 1fr; gap: 4px; } }
 .swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); flex-shrink: 0; }
 
 /* Pages tab */

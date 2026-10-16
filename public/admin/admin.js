@@ -911,7 +911,7 @@
       if (state.filter === 'sold' && !p.soldOut) return false;
       if (state.filter === 'available' && p.soldOut) return false;
       if (state.filter === 'low' && !isLowStock(p)) return false;
-      return !q || `${p.name} ${p.category}`.toLowerCase().includes(q);
+      return !q || `${p.name} ${p.category} ${p.subcategory || ''}`.toLowerCase().includes(q);
     });
 
     // Reordering only makes sense on the full list
@@ -933,7 +933,7 @@
             <div class="pthumb" style="${img ? '' : 'background:#c9a3a0'}">${img ? `<img src="${escapeHtml(img)}" alt="">` : escapeHtml(p.name.charAt(0))}</div>
             <div>
               <div class="pname">${escapeHtml(p.name)}</div>
-              <div class="pmeta">${escapeHtml(p.category || 'No category')} · ${p.images?.length || 0} picture(s)${p.trackStock ? ` · <b class="${isLowStock(p) ? 'low' : ''}">${stockTotal(p)} in stock</b>` : ''}</div>
+              <div class="pmeta">${escapeHtml([p.category || 'No category', p.subcategory].filter(Boolean).join(' › '))} · ${p.images?.length || 0} picture(s)${p.trackStock ? ` · <b class="${isLowStock(p) ? 'low' : ''}">${stockTotal(p)} in stock</b>` : ''}</div>
               <div class="pprice">${hasDiscount ? `${money(p.salePrice)}<s>${money(p.price)}</s>` : money(p.price)}</div>
             </div>
             <div class="toggles">
@@ -1111,6 +1111,9 @@
       form.soldOut.checked = product.soldOut;
       form.featured.checked = product.featured;
     }
+    fillSubcategories(product?.subcategory || '');
+    state.sizeSet = guessSizeSet();
+    renderSizePresets();
     renderImages();
     renderColorChips();
     form.trackStock.checked = Boolean(product?.trackStock);
@@ -1165,6 +1168,75 @@
     renderStockGrid();
   });
   $('colorsInput').addEventListener('input', renderColorChips);
+
+  // Ready-made size sets (shoes, kids, waist…). Tap a set to fill the sizes, then tap a size to remove/add it.
+  const SIZE_SETS = {
+    Clothes: ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'],
+    'Shoes (EU)': ['36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46'],
+    'Shoes (UK / PK)': ['5', '6', '7', '8', '9', '10', '11', '12'],
+    'Kids shoes': ['20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30', '31', '32', '33', '34', '35'],
+    'Kids (age)': ['0-6M', '6-12M', '1-2Y', '2-3Y', '3-4Y', '4-5Y', '5-6Y', '7-8Y', '9-10Y', '11-12Y'],
+    'Waist (jeans)': ['28', '30', '32', '34', '36', '38', '40'],
+    'Free size': ['Free size'],
+  };
+  const sizeList = () => splitList(form.sizes.value);
+
+  function guessSizeSet() {
+    const chosen = sizeList();
+    let best = null;
+    let bestHits = 0;
+    for (const [name, sizes] of Object.entries(SIZE_SETS)) {
+      const hits = chosen.filter((x) => sizes.includes(x)).length;
+      if (hits > bestHits) [best, bestHits] = [name, hits];
+    }
+    return best;
+  }
+
+  function renderSizePresets() {
+    const chosen = sizeList();
+    const set = SIZE_SETS[state.sizeSet];
+    $('sizePresets').innerHTML =
+      `<div class="size-sets">${Object.keys(SIZE_SETS)
+        .map((name) => `<button type="button" class="size-set${state.sizeSet === name ? ' on' : ''}" data-size-set="${escapeHtml(name)}">${escapeHtml(name)}</button>`)
+        .join('')}</div>` +
+      (set ? `<div class="color-chips">${set.map((sz) => `<button type="button" class="color-chip${chosen.includes(sz) ? ' on' : ''}" data-size="${escapeHtml(sz)}">${escapeHtml(sz)}</button>`).join('')}</div>` : '');
+  }
+
+  $('sizePresets').addEventListener('click', (e) => {
+    const setBtn = e.target.closest('[data-size-set]');
+    const sizeBtn = e.target.closest('[data-size]');
+    if (setBtn) {
+      const name = setBtn.dataset.sizeSet;
+      const current = sizeList();
+      if (current.length && !current.every((x) => SIZE_SETS[name].includes(x)) && !confirm(`Replace the sizes "${current.join(', ')}" with ${name}?`)) return;
+      state.sizeSet = name;
+      form.sizes.value = SIZE_SETS[name].join(', ');
+    } else if (sizeBtn) {
+      const size = sizeBtn.dataset.size;
+      const list = sizeList();
+      const i = list.indexOf(size);
+      if (i === -1) {
+        // keep the order of the set
+        const order = SIZE_SETS[state.sizeSet] || [];
+        list.push(size);
+        list.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      } else list.splice(i, 1);
+      form.sizes.value = list.join(', ');
+    } else return;
+    renderSizePresets();
+    renderStockGrid();
+  });
+  $('sizesInput').addEventListener('input', renderSizePresets);
+
+  // Sub-category list follows the chosen category
+  function fillSubcategories(selected = '') {
+    const subs = state.settings.subcategories?.[form.category.value] || [];
+    const options = [...new Set([...subs, selected].filter(Boolean))];
+    $('subcategorySelect').innerHTML = `<option value="">— None —</option>${options.map((x) => `<option>${escapeHtml(x)}</option>`).join('')}`;
+    $('subcategorySelect').value = selected;
+    $('subcategorySelect').closest('label').hidden = !options.length;
+  }
+  $('categorySelect').addEventListener('change', () => fillSubcategories());
 
   $('imageList').addEventListener('click', (e) => {
     const cover = e.target.closest('[data-cover]');
@@ -1224,6 +1296,7 @@
     const body = {
       name: form.name.value,
       category: form.category.value,
+      subcategory: form.subcategory.value,
       price,
       salePrice,
       description: form.description.value,
@@ -1265,6 +1338,9 @@
     const f = settingsForm;
     ['storeName', 'tagline', 'currency', 'announcement', 'heroTitle', 'heroSubtitle'].forEach((k) => (f[k].value = s[k] || ''));
     f.categories.value = (s.categories || []).join(', ');
+    state.subcatDraft = { ...(s.subcategories || {}) };
+    $('subcatEditor').innerHTML = '';
+    renderSubcatEditor();
     renderSlides();
     ['whatsapp', 'instagram', 'facebook', 'tiktok', 'youtube', 'email', 'phone'].forEach((k) => (f[k].value = s.social?.[k] || ''));
   }
@@ -1279,6 +1355,7 @@
       heroTitle: f.heroTitle.value,
       heroSubtitle: f.heroSubtitle.value,
       categories: f.categories.value,
+      subcategories: readSubcatEditor(),
       slides: state.settings.slides || [],
       sliderShape: state.settings.sliderShape || 'landscape',
       social: Object.fromEntries(['whatsapp', 'instagram', 'facebook', 'tiktok', 'youtube', 'email', 'phone'].map((k) => [k, f[k].value])),
@@ -1291,6 +1368,30 @@
       toast(err.message, true);
     }
   }
+
+  // One box per category for its sub-categories; rebuilt when the category list changes
+  const categoryNames = () => splitList(settingsForm.categories.value);
+
+  function readSubcatEditor() {
+    const out = { ...state.subcatDraft };
+    $('subcatEditor').querySelectorAll('[data-subcat]').forEach((el) => (out[el.dataset.subcat] = el.value));
+    return out;
+  }
+
+  function renderSubcatEditor() {
+    state.subcatDraft = readSubcatEditor();
+    const cats = categoryNames();
+    $('subcatEditor').innerHTML = cats.length
+      ? cats
+          .map((cat) => {
+            const v = state.subcatDraft[cat];
+            const value = Array.isArray(v) ? v.join(', ') : v || '';
+            return `<label class="subcat-row"><span>${escapeHtml(cat)}</span><input data-subcat="${escapeHtml(cat)}" value="${escapeHtml(value)}" placeholder="e.g. Kurta, Shirts, Shoes"></label>`;
+          })
+          .join('')
+      : '<p class="hint">Add categories above first.</p>';
+  }
+  settingsForm.categories.addEventListener('change', renderSubcatEditor);
 
   settingsForm.addEventListener('submit', (e) => {
     e.preventDefault();

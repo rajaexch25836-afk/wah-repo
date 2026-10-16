@@ -175,6 +175,7 @@ function sanitizeProduct(input, existing = {}) {
     name: str(input.name, 120) || existing.name || 'Untitled product',
     description: str(input.description, 3000),
     category: str(input.category, 60),
+    subcategory: str(input.subcategory, 60),
     price: price ?? existing.price ?? 0,
     salePrice: salePrice !== null && price !== null && salePrice < price ? salePrice : null,
     onSale: Boolean(input.onSale),
@@ -1923,6 +1924,17 @@ app.put('/api/admin/payment-settings', allow('payments'), (req, res) => {
   res.json({ ...store.paymentSettings, gateways: { safepay: SAFEPAY.enabled, easypaisa: EASYPAISA.enabled } });
 });
 
+// Sub-categories per category, e.g. { Men: ['Kurta', 'Shoes'] }. Only for categories that exist.
+function sanitizeSubcategories(input, categories) {
+  const out = {};
+  if (!input || typeof input !== 'object') return out;
+  for (const cat of categories) {
+    const subs = list(input[cat], 60).slice(0, 40);
+    if (subs.length) out[cat] = subs;
+  }
+  return out;
+}
+
 // Settings
 app.put('/api/admin/settings', allow('content'), (req, res) => {
   const body = req.body || {};
@@ -1936,6 +1948,7 @@ app.put('/api/admin/settings', allow('content'), (req, res) => {
     heroTitle: str(body.heroTitle, 120),
     heroSubtitle: str(body.heroSubtitle, 300),
     categories: list(body.categories),
+    subcategories: sanitizeSubcategories(body.subcategories, list(body.categories)),
     slides: sanitizeSlides(body.slides),
     sliderShape: body.sliderShape === 'portrait' ? 'portrait' : 'landscape',
     social: {

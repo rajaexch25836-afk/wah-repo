@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, stockSettings: { lowAt: 3 }, coupon: null, hasCoupons: false, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', query: '', sort: 'featured', cart: [], step: 'bag' };
+  const state = { settings: {}, content: { pages: {}, sizeGuide: {}, location: {} }, products: [], payments: {}, accounts: {}, delivery: { fee: 0, freeAbove: 0, cityFees: [] }, collections: [], reviews: [], loyalty: {}, stockSettings: { lowAt: 3 }, coupon: null, hasCoupons: false, wishlist: [], filters: { sizes: new Set(), colors: new Set(), min: null, max: null }, user: null, afterLogin: null, filter: 'all', sub: '', query: '', sort: 'featured', cart: [], step: 'bag' };
 
   const PLACEHOLDER_COLORS = ['#d9b99b', '#a8b596', '#c9a3a0', '#9fb3c2', '#d4b483', '#b7a4c9', '#c2562b', '#8a9a7b'];
 
@@ -286,7 +286,18 @@
     $('chips').innerHTML = chips
       .map(([value, label]) => `<button class="chip${value === 'sale' ? ' sale' : ''}${state.filter === value ? ' active' : ''}" data-filter="${escapeHtml(value)}">${escapeHtml(label)}</button>`)
       .join('');
+    // Sub-categories of the chosen category, e.g. Men → Kurta, Shoes
+    const subs = state.settings.subcategories?.[state.filter] || [];
+    if (!subs.includes(state.sub)) state.sub = '';
+    $('subChips').hidden = !subs.length;
+    $('subChips').innerHTML = subs.length
+      ? [['', `All ${state.filter}`], ...subs.map((x) => [x, x])]
+          .map(([value, label]) => `<button class="chip chip-sub${state.sub === value ? ' active' : ''}" data-sub="${escapeHtml(value)}">${escapeHtml(label)}</button>`)
+          .join('')
+      : '';
   }
+
+  const activeSub = () => ((state.settings.subcategories?.[state.filter] || []).includes(state.sub) ? state.sub : '');
 
   function visibleProducts() {
     const q = state.query.toLowerCase();
@@ -300,7 +311,8 @@
       if (state.filter.startsWith('col:')) {
         if (!state.collections.find((c) => `col:${c.id}` === state.filter)?.productIds.includes(p.id)) return false;
       } else if (!['all', 'sale'].includes(state.filter) && p.category !== state.filter) return false;
-      if (q && !`${p.name} ${p.category} ${p.description} ${(p.colors || []).join(' ')}`.toLowerCase().includes(q)) return false;
+      if (activeSub() && p.subcategory !== activeSub()) return false;
+      if (q && !`${p.name} ${p.category} ${p.subcategory || ''} ${p.description} ${(p.colors || []).join(' ')}`.toLowerCase().includes(q)) return false;
       return true;
     });
     const order = new Map(state.products.map((p, i) => [p.id, i]));
@@ -326,7 +338,7 @@
         <button class="card${p.soldOut ? ' sold' : ''}" data-id="${escapeHtml(p.id)}">
           <div class="card-media">${media(p)}${badges(p)}${heartHtml(p.id)}<span class="card-quick">${p.soldOut ? 'Sold out' : 'Quick view'}</span></div>
           <div class="card-info">
-            <div class="card-cat">${escapeHtml(p.category)}</div>
+            <div class="card-cat">${escapeHtml([p.category, p.subcategory].filter(Boolean).join(' · '))}</div>
             <div class="card-name">${escapeHtml(p.name)}</div>
             ${priceHtml(p)}
             ${ratingLine(p.id)}
@@ -442,7 +454,7 @@
         ${thumbs}
       </div>
       <div class="detail">
-        <div class="card-cat">${escapeHtml(p.category)}</div>
+        <div class="card-cat">${escapeHtml([p.category, p.subcategory].filter(Boolean).join(' · '))}</div>
         <div class="detail-title"><h2>${escapeHtml(p.name)}</h2>${heartHtml(p.id, true)}</div>
         ${ratingLine(p.id)}
         ${priceHtml(p)}
@@ -1601,6 +1613,13 @@
   });
 
   // ---------- events ----------
+  $('subChips').addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-sub]');
+    if (!chip) return;
+    state.sub = chip.dataset.sub;
+    renderChips();
+    renderGrid();
+  });
   $('chips').addEventListener('click', (e) => {
     const chip = e.target.closest('[data-filter]');
     if (!chip) return;

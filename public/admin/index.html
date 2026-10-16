@@ -306,6 +306,10 @@
             <label>Home page heading <input name="heroTitle" maxlength="120"></label>
             <label>Home page sub-heading <textarea name="heroSubtitle" rows="2" maxlength="300"></textarea></label>
             <label>Categories <small>Comma separated, e.g. Men, Women, Kids</small><input name="categories"></label>
+            <div class="field-block">
+              <div class="label-like">Sub-categories <small>Optional. For each category, comma separated, e.g. Men: Kurta, Shirts, Shoes</small></div>
+              <div class="subcat-editor" id="subcatEditor"></div>
+            </div>
           </div>
 
           <div class="panel">
@@ -466,13 +470,19 @@
           </label>
         </div>
         <label>Product name <input name="name" required maxlength="120"></label>
-        <label>Category <select name="category" id="categorySelect"></select></label>
+        <div class="row">
+          <label>Category <select name="category" id="categorySelect"></select></label>
+          <label>Sub-category <select name="subcategory" id="subcategorySelect"></select></label>
+        </div>
         <div class="row">
           <label>Price <input name="price" type="number" min="0" step="1" required></label>
           <label>Sale price <small>Optional</small><input name="salePrice" type="number" min="0" step="1"></label>
         </div>
         <label>Description <textarea name="description" rows="4" maxlength="3000"></textarea></label>
-        <label>Sizes <small>Comma separated, e.g. S, M, L, XL</small><input name="sizes"></label>
+        <div class="field-block">
+          <label>Sizes <small>Comma separated, or tap a ready-made set below (shoes, kids…)</small><input name="sizes" id="sizesInput"></label>
+          <div class="size-presets" id="sizePresets"></div>
+        </div>
         <div class="field-block">
           <label>Colours <small>Tap colours below, or type your own names separated by commas</small><input name="colors" id="colorsInput"></label>
           <div class="color-chips" id="colorChips"></div>
